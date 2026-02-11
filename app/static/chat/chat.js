@@ -810,8 +810,9 @@ async function sendChat() {
       imgUrls = await uploadImages(chatAttachments.map((x) => x.file));
     }
 
-    const userContent = imgUrls.length
-      ? [{ type: 'text', text: prompt || ' ' }, ...imgUrls.map((u) => ({ type: 'image_url', image_url: { url: u } }))]
+    const imageBlocks = imgUrls.map((u) => ({ type: 'image_url', image_url: { url: u } }));
+    const userContent = imageBlocks.length
+      ? (prompt ? [{ type: 'text', text: prompt }, ...imageBlocks] : imageBlocks)
       : prompt;
 
     chatMessages.push({ role: 'user', content: userContent });
@@ -832,7 +833,8 @@ async function sendChat() {
     } else {
       const res = await fetch('/v1/chat/completions', { method: 'POST', headers, body: JSON.stringify(body) });
       if (res.status === 401) return showToast('API Key 无效或未授权', 'error');
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error?.message || data?.detail || `HTTP ${res.status}`);
       const content = data?.choices?.[0]?.message?.content || '';
       chatMessages.push({ role: 'assistant', content });
       showUserMsg('assistant', content);
