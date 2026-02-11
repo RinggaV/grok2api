@@ -437,7 +437,7 @@ class VideoService:
         from app.services.grok.assets import UploadService
         
         try:
-            prompt, attachments = MessageExtractor.extract(messages, is_video=True)
+            prompt, attachments, _, _ = MessageExtractor.extract(messages, is_video=True)
         except ValueError as e:
             raise ValidationException(str(e))
         

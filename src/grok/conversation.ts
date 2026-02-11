@@ -21,9 +21,16 @@ export interface OpenAIChatRequestBody {
 
 export const CONVERSATION_API = "https://grok.com/rest/app-chat/conversations/new";
 
-export function extractContent(messages: OpenAIChatMessage[]): { content: string; images: string[] } {
+export function extractContent(messages: OpenAIChatMessage[]): {
+  content: string;
+  images: string[];
+  latestUserText: string;
+  latestHasImages: boolean;
+} {
   const images: string[] = [];
   let latestUserImages: string[] = [];
+  let latestUserText = "";
+  let latestHasImages = false;
   const extracted: Array<{ role: string; text: string }> = [];
 
   for (const msg of messages) {
@@ -53,13 +60,18 @@ export function extractContent(messages: OpenAIChatMessage[]): { content: string
 
     if (role === "user" && imagesInMessage.length) {
       latestUserImages = imagesInMessage;
+      latestHasImages = true;
     }
 
     if (!parts.length && imagesInMessage.length) {
       parts.push("[image]");
     }
 
-    if (parts.length) extracted.push({ role, text: parts.join("\n") });
+    if (parts.length) {
+      const text = parts.join("\n");
+      extracted.push({ role, text });
+      if (role === "user") latestUserText = text;
+    }
   }
 
   let lastUserIndex: number | null = null;
@@ -70,15 +82,30 @@ export function extractContent(messages: OpenAIChatMessage[]): { content: string
     }
   }
 
-  const out: string[] = [];
+  const history: string[] = [];
   for (let i = 0; i < extracted.length; i++) {
     const role = extracted[i]!.role || "user";
     const text = extracted[i]!.text;
-    if (i === lastUserIndex) out.push(text);
-    else out.push(`${role}: ${text}`);
+    if (i === lastUserIndex) continue;
+    history.push(`${role}: ${text}`);
   }
 
-  return { content: out.join("\n\n"), images: latestUserImages.length ? latestUserImages : images };
+  let content = "";
+  if (lastUserIndex !== null) {
+    const latest = extracted[lastUserIndex]?.text || latestUserText;
+    content = history.length
+      ? `Conversation so far:\n${history.join("\n\n")}\n\nUser: ${latest}`
+      : latest;
+  } else {
+    content = history.join("\n\n");
+  }
+
+  return {
+    content,
+    images: latestUserImages.length ? latestUserImages : images,
+    latestUserText,
+    latestHasImages,
+  };
 }
 
 export function buildConversationPayload(args: {
@@ -93,6 +120,7 @@ export function buildConversationPayload(args: {
     resolution?: string;
     preset?: string;
   };
+  imageGeneration?: { enabled: boolean; count?: number };
   settings: GrokSettings;
 }): { payload: Record<string, unknown>; referer?: string; isVideoModel: boolean } {
   const { requestModel, content, imgIds, imgUris, postId, settings } = args;
@@ -141,6 +169,11 @@ export function buildConversationPayload(args: {
     };
   }
 
+  const enableImageGeneration = args.imageGeneration?.enabled ?? true;
+  const imageGenerationCount = enableImageGeneration
+    ? Math.max(1, Math.floor(args.imageGeneration?.count ?? 2))
+    : 0;
+
   return {
     isVideoModel,
     payload: {
@@ -150,18 +183,18 @@ export function buildConversationPayload(args: {
       fileAttachments: imgIds,
       imageAttachments: [],
       disableSearch: false,
-      enableImageGeneration: true,
+      enableImageGeneration,
       returnImageBytes: false,
       returnRawGrokInXaiRequest: false,
       enableImageStreaming: true,
-      imageGenerationCount: 2,
+      imageGenerationCount,
       forceConcise: false,
       toolOverrides: {},
       enableSideBySide: true,
       sendFinalMetadata: true,
       isReasoning: false,
       webpageUrls: [],
-      disableTextFollowUps: true,
+      disableTextFollowUps: false,
       responseMetadata: { requestModelDetails: { modelId: grokModel } },
       disableMemory: false,
       forceSideBySide: false,

@@ -3,6 +3,7 @@ Grok Chat 服务
 """
 
 import asyncio
+import re
 import uuid
 import orjson
 from typing import Dict, List, Any
@@ -32,6 +33,13 @@ TIMEOUT = 120
 BROWSER = "chrome136"
 
 
+def looks_like_image_request(message: str) -> bool:
+    text = str(message or "").strip()
+    if not text:
+        return False
+    return re.search(r"(image|picture|photo|draw|create|generate|图片|图像|画|生成|绘制|插画|作图)", text, re.I) is not None
+
+
 @dataclass
 class ChatRequest:
     """聊天请求数据"""
@@ -50,7 +58,10 @@ class MessageExtractor:
     VIDEO_UNSUPPORTED = {"input_audio", "file"}
     
     @staticmethod
-    def extract(messages: List[Dict[str, Any]], is_video: bool = False) -> tuple[str, List[str]]:
+    def extract(
+        messages: List[Dict[str, Any]],
+        is_video: bool = False
+    ) -> tuple[str, List[str], str, bool]:
         """
         从 OpenAI 消息格式提取内容
         
@@ -69,12 +80,15 @@ class MessageExtractor:
 
         # 先抽取每条消息的文本，保留角色信息用于合并
         extracted: List[Dict[str, str]] = []
+        latest_user_text = ""
+        latest_has_image = False
 
         for msg in messages:
             role = msg.get("role", "")
             content = msg.get("content", "")
             parts = []
             has_attachment = False
+            has_image = False
 
             # 简单字符串内容
             if isinstance(content, str):
@@ -99,6 +113,7 @@ class MessageExtractor:
                         if url:
                             attachments.append(("image", url))
                             has_attachment = True
+                            has_image = True
 
                     # 音频类型
                     elif item_type == "input_audio":
@@ -127,7 +142,11 @@ class MessageExtractor:
                 parts.append("[attachment]")
 
             if parts:
-                extracted.append({"role": role, "text": "\n".join(parts)})
+                text = "\n".join(parts)
+                extracted.append({"role": role, "text": text})
+                if role == "user":
+                    latest_user_text = text
+                    latest_has_image = has_image
 
         # 合并文本
         last_user_index = None
@@ -140,18 +159,25 @@ class MessageExtractor:
             role = item["role"] or "user"
             text = item["text"]
             if i == last_user_index:
-                texts.append(text)
-            else:
-                texts.append(f"{role}: {text}")
+                continue
+            texts.append(f"{role}: {text}")
 
         # 换行拼接文本
-        message = "\n\n".join(texts)
-        return message, attachments
+        if last_user_index is not None:
+            latest = extracted[last_user_index]["text"]
+            if texts:
+                message = "Conversation so far:\n" + "\n\n".join(texts) + "\n\nUser: " + latest
+            else:
+                message = latest
+        else:
+            message = "\n\n".join(texts)
+
+        return message, attachments, latest_user_text, latest_has_image
     
     @staticmethod
     def extract_text_only(messages: List[Dict[str, Any]]) -> str:
         """仅提取文本内容"""
-        text, _ = MessageExtractor.extract(messages, is_video=True)
+        text, _, _, _ = MessageExtractor.extract(messages, is_video=True)
         return text
 
 
@@ -197,12 +223,14 @@ class ChatRequestBuilder:
     
     @staticmethod
     def build_payload(
-        message: str, 
-        model: str, 
-        mode: str, 
+        message: str,
+        model: str,
+        mode: str,
         think: bool = None,
         file_attachments: List[str] = None,
-        image_attachments: List[str] = None
+        image_attachments: List[str] = None,
+        enable_image_generation: bool = True,
+        image_generation_count: int = 2
     ) -> Dict[str, Any]:
         """
         构造请求体
@@ -234,11 +262,11 @@ class ChatRequestBuilder:
             "fileAttachments": merged_attachments,
             "imageAttachments": [],
             "disableSearch": False,
-            "enableImageGeneration": True,
+            "enableImageGeneration": enable_image_generation,
             "returnImageBytes": False,
             "returnRawGrokInXaiRequest": False,
             "enableImageStreaming": True,
-            "imageGenerationCount": 2,
+            "imageGenerationCount": max(0, int(image_generation_count or 0)),
             "forceConcise": False,
             "toolOverrides": {},
             "enableSideBySide": True,
@@ -281,7 +309,9 @@ class GrokChatService:
         think: bool = None,
         stream: bool = None,
         file_attachments: List[str] = None,
-        image_attachments: List[str] = None
+        image_attachments: List[str] = None,
+        enable_image_generation: bool = True,
+        image_generation_count: int = 2
     ):
         """
         发送聊天请求
@@ -304,8 +334,9 @@ class GrokChatService:
         
         headers = ChatRequestBuilder.build_headers(token)
         payload = ChatRequestBuilder.build_payload(
-            message, model, mode, think, 
-            file_attachments, image_attachments
+            message, model, mode, think,
+            file_attachments, image_attachments,
+            enable_image_generation, image_generation_count
         )
         proxies = {"http": self.proxy, "https": self.proxy} if self.proxy else None
         timeout = get_config("grok.timeout", TIMEOUT)
@@ -408,7 +439,9 @@ class GrokChatService:
         
         # 提取消息和附件
         try:
-            message, attachments = MessageExtractor.extract(request.messages, is_video=is_video)
+            message, attachments, latest_user_text, latest_has_image = MessageExtractor.extract(
+                request.messages, is_video=is_video
+            )
         except ValueError as e:
             raise ValidationException(str(e))
         
@@ -437,10 +470,15 @@ class GrokChatService:
         stream = request.stream if request.stream is not None else get_config("grok.stream", True)
         think = request.think if request.think is not None else get_config("grok.thinking", False)
         
+        enable_image_generation = bool(model_info.is_image) or latest_has_image or looks_like_image_request(latest_user_text)
+        image_generation_count = 2 if enable_image_generation else 0
+
         response = await self.chat(
             token, message, grok_model, mode, think, stream,
             file_attachments=file_ids,
-            image_attachments=image_ids
+            image_attachments=image_ids,
+            enable_image_generation=enable_image_generation,
+            image_generation_count=image_generation_count
         )
         
         return response, stream, request.model

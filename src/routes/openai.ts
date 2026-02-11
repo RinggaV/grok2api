@@ -113,6 +113,12 @@ function isContentModerationMessage(message: string): boolean {
   );
 }
 
+function looksLikeImageRequest(message: string): boolean {
+  const m = String(message || "").trim();
+  if (!m) return false;
+  return /(\bimage\b|\bpicture\b|\bphoto\b|\bdraw\b|\bcreate\b|\bgenerate\b|图片|图像|画|生成|绘制|插画|作图)/i.test(m);
+}
+
 async function enforceQuota(args: {
   env: Env;
   apiAuth: ApiAuthInfo;
@@ -1281,9 +1287,11 @@ openAiRoutes.post("/chat/completions", async (c) => {
       const cf = normalizeCfCookie(settingsBundle.grok.cf_clearance ?? "");
       const cookie = cf ? `sso-rw=${jwt};sso=${jwt};${cf}` : `sso-rw=${jwt};sso=${jwt}`;
 
-      const { content, images } = extractContent(body.messages as any);
+      const { content, images, latestUserText, latestHasImages } = extractContent(body.messages as any);
       const isVideoModel = Boolean(cfg.is_video_model);
       const imgInputs = isVideoModel && images.length > 1 ? images.slice(-1) : images;
+      const enableImageGeneration =
+        Boolean(cfg.is_image_model) || latestHasImages || looksLikeImageRequest(latestUserText);
 
       try {
         const normalizedImageInputs = await mapLimit(imgInputs, 5, (u) =>
@@ -1332,6 +1340,7 @@ openAiRoutes.post("/chat/completions", async (c) => {
           content,
           imgIds,
           imgUris,
+          imageGeneration: { enabled: enableImageGeneration, count: enableImageGeneration ? 2 : 0 },
           ...(postId ? { postId } : {}),
           ...(isVideoModel && body.video_config ? { videoConfig: body.video_config } : {}),
           settings: settingsBundle.grok,
