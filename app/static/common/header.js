@@ -210,8 +210,12 @@ async function loadAdminHeader() {
         const href = link.getAttribute('href') || '';
         if (!href || href.startsWith('http')) return;
         event.preventDefault();
-        if (href === window.location.pathname) return;
-        loadAdminPage(href, true);
+        const target = new URL(href, window.location.origin);
+        if (!target.search && window.location.search) {
+          target.search = window.location.search;
+        }
+        if (target.pathname === window.location.pathname && target.search === window.location.search) return;
+        loadAdminPage(target.toString(), true);
       });
     });
   } catch (e) {
