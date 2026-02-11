@@ -95,7 +95,7 @@ function pickImageSrc(item) {
   return '';
 }
 
-function showUserMsg(role, content) {
+function showUserMsg(role, content, forceText = role !== 'assistant') {
   const wrap = document.createElement('div');
   wrap.className = 'msg';
   wrap.innerHTML = `
@@ -103,10 +103,36 @@ function showUserMsg(role, content) {
     <div class="msg-bubble"></div>
   `;
   const bubble = wrap.querySelector('.msg-bubble');
-  renderContent(bubble, content, role !== 'assistant');
+  renderContent(bubble, content, forceText);
   q('chat-messages').appendChild(wrap);
   q('chat-messages').scrollTop = q('chat-messages').scrollHeight;
   return bubble;
+}
+
+function buildUserMessageDisplay(content) {
+  if (!Array.isArray(content)) {
+    return { text: String(content || ''), hasMedia: false };
+  }
+
+  const lines = [];
+  let hasMedia = false;
+
+  content.forEach((item) => {
+    const type = String(item?.type || '').trim();
+    if (type === 'text') {
+      const text = String(item?.text || '').trim();
+      if (text) lines.push(text);
+      return;
+    }
+    if (type === 'image_url') {
+      const url = toAbsoluteUrl(String(item?.image_url?.url || '').trim());
+      if (!url) return;
+      hasMedia = true;
+      lines.push(`![image](${url})`);
+    }
+  });
+
+  return { text: lines.join('\n\n') || '[图片]', hasMedia };
 }
 
 function mdImagesToHtml(text) {
@@ -817,7 +843,8 @@ async function sendChat() {
 
     chatMessages.push({ role: 'user', content: userContent });
 
-    showUserMsg('user', prompt || '[图片]');
+    const display = buildUserMessageDisplay(userContent);
+    showUserMsg('user', display.text, !display.hasMedia);
     q('chat-input').value = '';
     chatAttachments.forEach((a) => {
       try { URL.revokeObjectURL(a.previewUrl); } catch (e) {}
