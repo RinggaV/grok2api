@@ -1,6 +1,7 @@
 let mobileNavKeydownHandler = null;
 let navLoadInFlight = null;
 let activePageKey = null;
+const scriptLoaders = new Map();
 
 function setupMobileDrawer(container) {
   const toggleBtn = container.querySelector('#mobile-nav-toggle');
@@ -123,8 +124,7 @@ function collectPageAssets(doc) {
   };
 }
 
-function replacePageAssets(assets) {
-  document.querySelectorAll('link[data-page]').forEach((el) => el.remove());
+function ensurePageAssets(assets) {
   const head = document.head || document.documentElement;
   assets.styles.forEach((link) => {
     const href = link.getAttribute('href') || '';
@@ -138,14 +138,24 @@ function replacePageAssets(assets) {
     Array.from(link.attributes).forEach((attr) => clone.setAttribute(attr.name, attr.value));
     head.appendChild(clone);
   });
-  assets.scripts.forEach((script) => {
+
+  const scriptPromises = assets.scripts.map((script) => {
     const src = script.getAttribute('src') || '';
-    if (!src) return;
-    if (document.querySelector(`script[src="${src}"]`)) return;
-    const clone = document.createElement('script');
-    Array.from(script.attributes).forEach((attr) => clone.setAttribute(attr.name, attr.value));
-    document.body.appendChild(clone);
+    if (!src) return Promise.resolve();
+    if (document.querySelector(`script[src="${src}"]`)) return Promise.resolve();
+    if (scriptLoaders.has(src)) return scriptLoaders.get(src);
+    const promise = new Promise((resolve, reject) => {
+      const clone = document.createElement('script');
+      Array.from(script.attributes).forEach((attr) => clone.setAttribute(attr.name, attr.value));
+      clone.onload = () => resolve();
+      clone.onerror = () => reject(new Error(`Failed to load ${src}`));
+      document.body.appendChild(clone);
+    });
+    scriptLoaders.set(src, promise);
+    return promise;
   });
+
+  return Promise.all(scriptPromises);
 }
 
 function getPageContainer(doc) {
@@ -171,7 +181,7 @@ async function loadAdminPage(url, pushState) {
     document.title = doc.title || document.title;
     document.body.className = doc.body.className || document.body.className;
     currentContainer.replaceWith(nextContainer);
-    replacePageAssets(assets);
+    await ensurePageAssets(assets);
     if (pushState) window.history.pushState({}, '', url);
     const header = document.getElementById('app-header');
     if (header) updateActiveNav(header, window.location.pathname);
