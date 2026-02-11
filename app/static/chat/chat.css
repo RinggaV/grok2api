@@ -88,11 +88,68 @@
   margin-top: 8px;
 }
 
+.msg-bubble.msg-has-images {
+  line-height: 1.5;
+}
+
+.msg-bubble img.msg-image {
+  max-width: 100%;
+  height: auto;
+}
+
+.msg-bubble.msg-image-multi img.msg-image {
+  display: inline-block;
+  width: calc(50% - 6px);
+  max-width: calc(50% - 6px);
+  margin: 8px 6px 0 0;
+  vertical-align: top;
+}
+
+.msg-bubble.msg-image-multi img.msg-image:nth-child(2n) {
+  margin-right: 0;
+}
+
 .msg-bubble video {
   max-width: 100%;
   border-radius: 12px;
   border: 1px solid var(--border);
   margin-top: 8px;
+}
+
+.think-block {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px dashed var(--border);
+  background: rgba(0, 0, 0, 0.02);
+  font-size: 12px;
+  color: var(--accents-5);
+}
+
+.think-block summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--accents-5);
+  list-style: none;
+}
+
+.think-block summary::-webkit-details-marker {
+  display: none;
+}
+
+.think-block .think-content {
+  margin-top: 6px;
+  line-height: 1.5;
+  white-space: normal;
+  word-break: break-word;
+}
+
+@media (max-width: 640px) {
+  .msg-bubble.msg-image-multi img.msg-image {
+    width: 100%;
+    max-width: 100%;
+    margin-right: 0;
+  }
 }
 
 .composer {

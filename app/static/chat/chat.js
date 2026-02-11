@@ -154,7 +154,7 @@ function mdImagesToHtml(text) {
 }
 
 function sanitizeHtml(html) {
-  const allowedTags = new Set(['A', 'IMG', 'VIDEO', 'SOURCE', 'BR', 'P', 'PRE', 'CODE', 'DIV', 'SPAN']);
+  const allowedTags = new Set(['A', 'IMG', 'VIDEO', 'SOURCE', 'BR', 'P', 'PRE', 'CODE', 'DIV', 'SPAN', 'DETAILS', 'SUMMARY']);
   const allowedAttrs = {
     A: new Set(['href', 'target', 'rel']),
     IMG: new Set(['src', 'alt']),
@@ -163,8 +163,10 @@ function sanitizeHtml(html) {
     P: new Set([]),
     PRE: new Set([]),
     CODE: new Set([]),
-    DIV: new Set([]),
-    SPAN: new Set([]),
+    DIV: new Set(['class']),
+    SPAN: new Set(['class']),
+    DETAILS: new Set(['class', 'open']),
+    SUMMARY: new Set(['class']),
   };
 
   const doc = new DOMParser().parseFromString(`<div>${html}</div>`, 'text/html');
@@ -209,9 +211,46 @@ function sanitizeHtml(html) {
   return container.innerHTML;
 }
 
+function stripImageEditPreamble(text) {
+  const value = String(text || '');
+  return value
+    .replace(/^\s*I\s+edited\s+the\s+image\s+with\s+the\s+prompt\s*:\s*['\"][^'\"]*['\"]\s*/i, '')
+    .replace(/^\s*Image\s+Edit\s*:\s*/i, '');
+}
+
+function normalizeThinkBlocks(text) {
+  const value = String(text || '');
+  if (!value.includes('<think>')) return value;
+
+  let out = value.replace(/<think>([\s\S]*?)<\/think>/gi, (_m, inner) => {
+    const safe = escapeHtml(inner).replace(/\n/g, '<br/>');
+    return `<details class="think-block"><summary>Think</summary><div class="think-content">${safe}</div></details>`;
+  });
+
+  if (out.includes('<think>')) {
+    const parts = out.split(/<think>/i);
+    const before = parts.shift() || '';
+    const rest = parts.join('<think>');
+    const safe = escapeHtml(rest).replace(/\n/g, '<br/>');
+    out = `${before}<details class="think-block" open><summary>Think</summary><div class="think-content">${safe}</div></details>`;
+  }
+
+  return out;
+}
+
+function enhanceMessageMedia(container) {
+  if (!container) return;
+  const images = Array.from(container.querySelectorAll('img'));
+  if (!images.length) return;
+
+  container.classList.add('msg-has-images');
+  if (images.length > 1) container.classList.add('msg-image-multi');
+  images.forEach((img) => img.classList.add('msg-image'));
+}
+
 function renderContent(container, content, forceText) {
   container.innerHTML = '';
-  const text = String(content || '');
+  let text = String(content || '');
 
   if (forceText) {
     const pre = document.createElement('pre');
@@ -220,6 +259,8 @@ function renderContent(container, content, forceText) {
     return;
   }
 
+  text = stripImageEditPreamble(text);
+  text = normalizeThinkBlocks(text);
   const html = sanitizeHtml(mdImagesToHtml(text).replace(/\n/g, '<br/>'));
   if (!html.trim()) {
     const pre = document.createElement('pre');
@@ -228,6 +269,7 @@ function renderContent(container, content, forceText) {
     return;
   }
   container.innerHTML = html;
+  enhanceMessageMedia(container);
 }
 
 async function init() {
