@@ -232,6 +232,8 @@ mediaRoutes.get("/images/:imgPath{.+}", async (c) => {
   }
 
   const contentType = upstream.headers.get("content-type") ?? "";
+  const normalizedContentType = contentType.toLowerCase();
+  const responseType: CacheType = normalizedContentType.startsWith("video/") ? "video" : type;
   const contentLengthHeader = upstream.headers.get("content-length") ?? "";
   const contentLength = contentLengthHeader ? Number(contentLengthHeader) : NaN;
   const maxBytes = Math.min(25 * 1024 * 1024, Math.max(1, parseIntSafe(c.env.KV_CACHE_MAX_BYTES, 25 * 1024 * 1024)));
@@ -259,12 +261,16 @@ mediaRoutes.get("/images/:imgPath{.+}", async (c) => {
 
           await c.env.KV_CACHE.put(key, toKv, {
             expiration: expiresAt,
-            metadata: { contentType, size: Number.isFinite(contentLength) ? contentLength : byteCount, type },
+            metadata: {
+              contentType,
+              size: Number.isFinite(contentLength) ? contentLength : byteCount,
+              type: responseType,
+            },
           });
           const now = nowMs();
           await upsertCacheRow(c.env.DB, {
             key,
-            type,
+            type: responseType,
             size: Number.isFinite(contentLength) ? contentLength : byteCount,
             content_type: contentType,
             created_at: now,

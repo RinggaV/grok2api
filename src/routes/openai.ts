@@ -211,6 +211,40 @@ function toProxyUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/$/, "")}/images/${path}`;
 }
 
+function extractLocalUploadName(rawUrl: string, origin: string): string | null {
+  try {
+    const url = new URL(rawUrl);
+    if (url.origin !== origin) return null;
+    const m = url.pathname.match(/^\/images\/([^/]+)$/i);
+    if (!m) return null;
+    const name = decodeURIComponent(String(m[1] || "")).trim();
+    if (!/^upload-[0-9a-f-]+\.[a-z0-9]+$/i.test(name)) return null;
+    return name;
+  } catch {
+    return null;
+  }
+}
+
+async function maybeResolveLocalUploadToDataUrl(args: {
+  rawUrl: string;
+  origin: string;
+  env: Env;
+}): Promise<string> {
+  const name = extractLocalUploadName(args.rawUrl, args.origin);
+  if (!name) return args.rawUrl;
+
+  const kvKey = `image/${name}`;
+  const cached = await args.env.KV_CACHE.getWithMetadata<{ contentType?: string }>(kvKey, {
+    type: "arrayBuffer",
+  });
+  if (!cached?.value) return args.rawUrl;
+
+  const byFilename = mimeFromFilename(name) || "image/jpeg";
+  const mime = normalizeImageMime(String(cached.metadata?.contentType || byFilename));
+  const b64 = arrayBufferToBase64(cached.value);
+  return `data:${mime};base64,${b64}`;
+}
+
 type ImageResponseFormat = "url" | "base64" | "b64_json";
 
 function resolveResponseFormat(raw: unknown, defaultMode: string): ImageResponseFormat | null {
@@ -1252,15 +1286,31 @@ openAiRoutes.post("/chat/completions", async (c) => {
       const imgInputs = isVideoModel && images.length > 1 ? images.slice(-1) : images;
 
       try {
-        const uploadResults = await runTasksSettledWithLimit(imgInputs, 5, (u) =>
+        const normalizedImageInputs = await mapLimit(imgInputs, 5, (u) =>
+          maybeResolveLocalUploadToDataUrl({ rawUrl: u, origin, env: c.env }),
+        );
+
+        const uploadResults = await runTasksSettledWithLimit(normalizedImageInputs, 5, (u) =>
           uploadImage(u, cookie, settingsBundle.grok),
         );
+
+        for (const result of uploadResults) {
+          if (result.status === "rejected") {
+            const msg = result.reason instanceof Error ? result.reason.message : String(result.reason);
+            console.warn("Image upload for chat/video failed:", msg);
+          }
+        }
+
         const uploads = uploadResults
           .filter((result): result is PromiseFulfilledResult<{ fileId: string; fileUri: string }> => result.status === "fulfilled")
           .map((result) => result.value)
           .filter((u) => u.fileId || u.fileUri);
         const imgIds = uploads.map((u) => u.fileId).filter(Boolean);
         const imgUris = uploads.map((u) => u.fileUri).filter(Boolean);
+
+        if (isVideoModel && normalizedImageInputs.length > 0 && imgUris.length === 0) {
+          throw new Error("Reference image upload failed");
+        }
 
         let postId: string | undefined;
         if (isVideoModel) {
