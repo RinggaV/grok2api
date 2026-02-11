@@ -203,6 +203,12 @@ mediaRoutes.get("/images/:imgPath{.+}", async (c) => {
     return responseFromBytes({ bytes: cached.value, contentType, cacheSeconds, rangeHeader });
   }
 
+  // Uploaded local files are keyed as image/upload-<uuid>.<ext> and should not fallback
+  // to upstream path reconstruction when KV misses (that path does not exist on assets.grok.com).
+  if (!upstreamUrl && /^\/upload-[0-9a-f-]+\.[a-z0-9]+$/i.test(originalPath)) {
+    return new Response("Not Found", { status: 404 });
+  }
+
   // stale metadata cleanup (best-effort)
   c.executionCtx.waitUntil(deleteCacheRow(c.env.DB, key));
 

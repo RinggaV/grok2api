@@ -1249,10 +1249,16 @@ openAiRoutes.post("/chat/completions", async (c) => {
 
       const { content, images } = extractContent(body.messages as any);
       const isVideoModel = Boolean(cfg.is_video_model);
-      const imgInputs = isVideoModel && images.length > 1 ? images.slice(0, 1) : images;
+      const imgInputs = isVideoModel && images.length > 1 ? images.slice(-1) : images;
 
       try {
-        const uploads = await mapLimit(imgInputs, 5, (u) => uploadImage(u, cookie, settingsBundle.grok));
+        const uploadResults = await runTasksSettledWithLimit(imgInputs, 5, (u) =>
+          uploadImage(u, cookie, settingsBundle.grok),
+        );
+        const uploads = uploadResults
+          .filter((result): result is PromiseFulfilledResult<{ fileId: string; fileUri: string }> => result.status === "fulfilled")
+          .map((result) => result.value)
+          .filter((u) => u.fileId || u.fileUri);
         const imgIds = uploads.map((u) => u.fileId).filter(Boolean);
         const imgUris = uploads.map((u) => u.fileUri).filter(Boolean);
 
@@ -1976,15 +1982,17 @@ openAiRoutes.post("/uploads/image", async (c) => {
     const name = `upload-${crypto.randomUUID()}.${ext}`;
     const kvKey = `image/${name}`;
 
+    const now = nowMs();
     const tz = parseIntSafe(c.env.CACHE_RESET_TZ_OFFSET_MINUTES, 480);
-    const expiresAt = nextLocalMidnightExpirationSeconds(nowMs(), tz);
+    const midnightExpiresAt = nextLocalMidnightExpirationSeconds(now, tz);
+    const minKeepSeconds = 60 * 60 * 24;
+    const expiresAt = Math.max(midnightExpiresAt, Math.floor(now / 1000) + minKeepSeconds);
 
     await c.env.KV_CACHE.put(kvKey, bytes, {
       expiration: expiresAt,
       metadata: { contentType: mime, size },
     });
 
-    const now = nowMs();
     await upsertCacheRow(c.env.DB, {
       key: kvKey,
       type: "image",

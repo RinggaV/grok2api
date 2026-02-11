@@ -23,6 +23,7 @@ export const CONVERSATION_API = "https://grok.com/rest/app-chat/conversations/ne
 
 export function extractContent(messages: OpenAIChatMessage[]): { content: string; images: string[] } {
   const images: string[] = [];
+  let latestUserImages: string[] = [];
   const extracted: Array<{ role: string; text: string }> = [];
 
   for (const msg of messages) {
@@ -30,6 +31,7 @@ export function extractContent(messages: OpenAIChatMessage[]): { content: string
     const content = msg.content ?? "";
 
     const parts: string[] = [];
+    const imagesInMessage: string[] = [];
     if (Array.isArray(content)) {
       for (const item of content) {
         if (item?.type === "text") {
@@ -38,12 +40,19 @@ export function extractContent(messages: OpenAIChatMessage[]): { content: string
         }
         if (item?.type === "image_url") {
           const url = item.image_url?.url;
-          if (url) images.push(url);
+          if (url) {
+            images.push(url);
+            imagesInMessage.push(url);
+          }
         }
       }
     } else {
       const t = String(content);
       if (t.trim()) parts.push(t);
+    }
+
+    if (role === "user" && imagesInMessage.length) {
+      latestUserImages = imagesInMessage;
     }
 
     if (parts.length) extracted.push({ role, text: parts.join("\n") });
@@ -65,7 +74,7 @@ export function extractContent(messages: OpenAIChatMessage[]): { content: string
     else out.push(`${role}: ${text}`);
   }
 
-  return { content: out.join("\n\n"), images };
+  return { content: out.join("\n\n"), images: latestUserImages.length ? latestUserImages : images };
 }
 
 export function buildConversationPayload(args: {
