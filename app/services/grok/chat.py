@@ -74,6 +74,7 @@ class MessageExtractor:
             role = msg.get("role", "")
             content = msg.get("content", "")
             parts = []
+            has_attachment = False
 
             # 简单字符串内容
             if isinstance(content, str):
@@ -97,6 +98,7 @@ class MessageExtractor:
                         url = image_data.get("url", "") if isinstance(image_data, dict) else str(image_data)
                         if url:
                             attachments.append(("image", url))
+                            has_attachment = True
 
                     # 音频类型
                     elif item_type == "input_audio":
@@ -106,6 +108,7 @@ class MessageExtractor:
                         data = audio_data.get("data", "") if isinstance(audio_data, dict) else str(audio_data)
                         if data:
                             attachments.append(("audio", data))
+                            has_attachment = True
 
                     # 文件类型
                     elif item_type == "file":
@@ -118,6 +121,10 @@ class MessageExtractor:
                             url = file_data
                         if url:
                             attachments.append(("file", url))
+                            has_attachment = True
+
+            if not parts and has_attachment:
+                parts.append("[attachment]")
 
             if parts:
                 extracted.append({"role": role, "text": "\n".join(parts)})

@@ -71,6 +71,7 @@
   border-radius: 12px;
   padding: 10px 12px;
   overflow: hidden;
+  position: relative;
 }
 
 .msg-bubble pre {
@@ -107,6 +108,29 @@
 
 .msg-bubble.msg-image-multi img.msg-image:nth-child(2n) {
   margin-right: 0;
+}
+
+.msg-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.msg-action-btn {
+  border: 1px solid var(--border);
+  background: white;
+  color: var(--accents-5);
+  width: 26px;
+  height: 26px;
+  border-radius: 9999px;
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.msg-action-btn:hover {
+  color: black;
+  border-color: black;
 }
 
 .msg-bubble video {

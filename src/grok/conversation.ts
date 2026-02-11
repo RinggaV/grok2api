@@ -55,6 +55,10 @@ export function extractContent(messages: OpenAIChatMessage[]): { content: string
       latestUserImages = imagesInMessage;
     }
 
+    if (!parts.length && imagesInMessage.length) {
+      parts.push("[image]");
+    }
+
     if (parts.length) extracted.push({ role, text: parts.join("\n") });
   }
 

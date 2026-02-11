@@ -106,7 +106,7 @@ function enableImageClickZoom(imgEl, src) {
   });
 }
 
-function showUserMsg(role, content, forceText = role !== 'assistant') {
+function showUserMsg(role, content, forceText = role !== 'assistant', userMessageIndex = null) {
   const wrap = document.createElement('div');
   wrap.className = 'msg';
   wrap.innerHTML = `
@@ -115,6 +115,18 @@ function showUserMsg(role, content, forceText = role !== 'assistant') {
   `;
   const bubble = wrap.querySelector('.msg-bubble');
   renderContent(bubble, content, forceText);
+  if (role === 'user' && typeof userMessageIndex === 'number') {
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+    const btn = document.createElement('button');
+    btn.className = 'msg-action-btn';
+    btn.type = 'button';
+    btn.title = '重新回答';
+    btn.textContent = '⟳';
+    btn.addEventListener('click', () => resendUserMessage(userMessageIndex));
+    actions.appendChild(btn);
+    bubble.appendChild(actions);
+  }
   q('chat-messages').appendChild(wrap);
   q('chat-messages').scrollTop = q('chat-messages').scrollHeight;
   return bubble;
@@ -272,6 +284,14 @@ function renderContent(container, content, forceText) {
   enhanceMessageMedia(container);
 }
 
+function setThinkBlocksOpen(open) {
+  const blocks = document.querySelectorAll('.think-block');
+  blocks.forEach((el) => {
+    if (open) el.setAttribute('open', '');
+    else el.removeAttribute('open');
+  });
+}
+
 async function init() {
   if (isAdminChat()) {
     const adminSession = await ensureApiKey();
@@ -294,6 +314,10 @@ async function init() {
   if (!q('api-key-input').value) q('api-key-input').value = saved;
 
   bindFileInputs();
+  q('think-toggle')?.addEventListener('change', () => {
+    const open = Boolean(q('think-toggle')?.checked);
+    setThinkBlocksOpen(open);
+  });
   q('image-run-mode')?.addEventListener('change', () => {
     if (getImageRunMode() !== 'continuous') {
       stopImageContinuous();
@@ -810,7 +834,11 @@ async function refreshModels() {
 
     if (currentTab === 'image') sel.value = 'grok-imagine-1.0';
     else if (currentTab === 'video') sel.value = 'grok-imagine-1.0-video';
-    else sel.value = sel.value || 'grok-4-fast';
+    else {
+      const hasThinking = models.some((m) => String(m.id || '') === 'grok-4.1-thinking');
+      if (hasThinking) sel.value = 'grok-4.1-thinking';
+      else sel.value = sel.value || 'grok-4-fast';
+    }
   } catch (e) {
     showToast('加载模型失败: ' + (e?.message || e), 'error');
   }
@@ -897,9 +925,9 @@ async function sendChat() {
       : prompt;
 
     chatMessages.push({ role: 'user', content: userContent });
-
+    const userIndex = chatMessages.length - 1;
     const display = buildUserMessageDisplay(userContent);
-    showUserMsg('user', display.text, !display.hasMedia);
+    showUserMsg('user', display.text, !display.hasMedia, userIndex);
     q('chat-input').value = '';
     chatAttachments.forEach((a) => {
       try { URL.revokeObjectURL(a.previewUrl); } catch (e) {}
@@ -923,6 +951,35 @@ async function sendChat() {
     }
   } catch (e) {
     showToast('发送失败: ' + (e?.message || e), 'error');
+  }
+}
+
+async function resendUserMessage(userMessageIndex) {
+  if (typeof userMessageIndex !== 'number' || userMessageIndex < 0) return;
+  const target = chatMessages[userMessageIndex];
+  if (!target || target.role !== 'user') return;
+
+  const model = String(q('model-select').value || '').trim();
+  const stream = Boolean(q('stream-toggle').checked);
+  const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
+  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
+
+  const body = { model, messages: chatMessages.slice(0, userMessageIndex + 1), stream };
+  try {
+    if (stream) {
+      const assistantBubble = showUserMsg('assistant', '');
+      await streamChat(body, assistantBubble);
+    } else {
+      const res = await fetch('/v1/chat/completions', { method: 'POST', headers, body: JSON.stringify(body) });
+      if (res.status === 401) return showToast('API Key 无效或未授权', 'error');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error?.message || data?.detail || `HTTP ${res.status}`);
+      const content = data?.choices?.[0]?.message?.content || '';
+      chatMessages.push({ role: 'assistant', content });
+      showUserMsg('assistant', content);
+    }
+  } catch (e) {
+    showToast('重试失败: ' + (e?.message || e), 'error');
   }
 }
 
