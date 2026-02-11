@@ -1,6 +1,6 @@
 # Grok2API
 
-本项目为对 [chenyme/grok2api](https://github.com/chenyme/grok2api) 的二次修改与增强。
+本项目为对 [TQZHR/grok2api](https://github.com/TQZHR/grok2api) 的二次修改与增强。
 
 **中文** | [English](docs/README.en.md)
 
@@ -391,6 +391,17 @@ curl http://localhost:8000/v1/images/edits \
 
 <br>
 
+## 更新日志（2026-02-11）
+
+- 修复在线聊天/视频参考图 522：Worker 侧支持把本地上传 `/images/upload-*` 解析为 data URL 再上传到 Grok。
+- 修复视频文件计数：缓存统计根据 `Content-Type` 正确识别 video。
+- 修复聊天上下文错乱：图片-only 消息补位、历史合并提示“Conversation so far”，并让最新用户消息优先。
+- 限制非生图聊天触发出图：仅当模型为生图/包含图片/明显生图意图时才开启 `enableImageGeneration`。
+- 聊天页增强：支持 think 块展示、显示/折叠开关、用户消息“重新回答”按钮。
+- 聊天模型选择：默认 `grok-4.1-thinking`，去掉保存/清除按钮，下拉选择即生效。
+- 生图体验：图片可点击放大、AI 回复图增加“下载”按钮。
+- 管理后台导航改为 SPA 动态加载，切换 tab 不整页刷新，固定元素不重复请求。
+
 ## 本次修复
 
 - 修复 Token 页 `refreshStatus` 依赖全局 `event` 的问题，改为显式传入按钮引用，避免不同运行环境下按钮状态异常。
@@ -408,6 +419,3 @@ curl http://localhost:8000/v1/images/edits \
   - `token.nsfw_refresh_retries`（默认 `3`）
 - 说明：该功能仅在 `python-fastapi`（本地/Docker）开放；`cloudflare-workers` 侧不展示该按钮。
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=TQZHR/grok2api&type=Timeline)](https://star-history.com/#TQZHR/grok2api&Timeline)
