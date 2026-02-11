@@ -7,17 +7,18 @@
   <title>Grok2API - 数据中心</title>
   <link rel="icon" href="/static/favicon/favicon.ico">
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js" data-page="datacenter"></script>
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
   <link href="/static/common/common.css?v=3" rel="stylesheet">
   <link href="/static/common/toast.css" rel="stylesheet">
-  <link href="/static/datacenter/datacenter.css?v=2" rel="stylesheet">
+  <link href="/static/datacenter/datacenter.css?v=2" rel="stylesheet" data-page="datacenter">
 </head>
 
 <body class="min-h-screen flex flex-col" style="background-color: var(--bg);">
   <div id="app-header"></div>
 
+  <div id="app-page">
   <main class="space-y-6 flex-1 container mx-auto max-w-4xl px-6 py-8 fade-in">
     <div class="space-y-6">
       <div class="flex flex-wrap justify-between items-start gap-3">
@@ -132,6 +133,7 @@
       </div>
     </div>
   </main>
+  </div>
 
   <div id="app-footer"></div>
 
@@ -141,7 +143,7 @@
   <script src="/static/common/header.js?v=3"></script>
   <script src="/static/common/footer.js?v=1"></script>
   <script src="/static/common/toast.js"></script>
-  <script src="/static/datacenter/datacenter.js?v=2"></script>
+  <script src="/static/datacenter/datacenter.js?v=2" data-page="datacenter"></script>
 </body>
 
 </html>

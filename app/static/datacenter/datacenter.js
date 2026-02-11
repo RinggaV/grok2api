@@ -277,4 +277,22 @@ async function init() {
   startTimers();
 }
 
-window.onload = init;
+function cleanup() {
+  stopTimers();
+}
+
+function mountPage() {
+  const pageKey = 'datacenter';
+  if (window.__pageActive === pageKey) return;
+  window.__pageActive = pageKey;
+  init();
+}
+
+window.__pageInit = mountPage;
+window.__pageCleanup = cleanup;
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', mountPage);
+} else {
+  mountPage();
+}

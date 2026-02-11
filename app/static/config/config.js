@@ -400,4 +400,18 @@ async function copyToClipboard(text, btn) {
   }
 }
 
-window.onload = init;
+function mountPage() {
+  const pageKey = 'config';
+  if (window.__pageActive === pageKey) return;
+  window.__pageActive = pageKey;
+  init();
+}
+
+window.__pageInit = mountPage;
+window.__pageCleanup = null;
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', mountPage);
+} else {
+  mountPage();
+}

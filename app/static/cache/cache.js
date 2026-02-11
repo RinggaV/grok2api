@@ -1298,4 +1298,23 @@ async function clearOnlineCache(targetToken = '', skipConfirm = false) {
   }
 }
 
-window.onload = init;
+function cleanup() {
+  if (localStatsTimer) clearInterval(localStatsTimer);
+  localStatsTimer = null;
+}
+
+function mountPage() {
+  const pageKey = 'cache';
+  if (window.__pageActive === pageKey) return;
+  window.__pageActive = pageKey;
+  init();
+}
+
+window.__pageInit = mountPage;
+window.__pageCleanup = cleanup;
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', mountPage);
+} else {
+  mountPage();
+}

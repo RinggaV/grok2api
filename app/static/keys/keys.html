@@ -10,7 +10,7 @@
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
   <link href="/static/common/common.css?v=3" rel="stylesheet">
-  <link href="/static/keys/keys.css?v=3" rel="stylesheet">
+  <link href="/static/keys/keys.css?v=3" rel="stylesheet" data-page="keys">
   <link href="/static/common/toast.css" rel="stylesheet">
 </head>
 
@@ -18,6 +18,7 @@
   <div id="toast-container" class="toast-container"></div>
   <div id="app-header"></div>
 
+  <div id="app-page">
   <main class="space-y-6 flex-1 container mx-auto max-w-4xl px-6 py-8 fade-in">
     <div class="keys-page-header flex flex-wrap justify-between items-start gap-3">
       <div>
@@ -93,8 +94,6 @@
     </div>
   </main>
 
-  <div id="app-footer"></div>
-
   <!-- Create / Edit Modal -->
   <div id="key-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="key-modal-title">
     <div class="modal-content modal-lg" id="key-modal-content">
@@ -162,12 +161,15 @@
       </div>
     </div>
   </div>
+  </div>
+
+  <div id="app-footer"></div>
 
   <script src="/static/common/toast.js"></script>
   <script src="/static/common/admin-auth.js"></script>
   <script src="/static/common/header.js?v=3"></script>
   <script src="/static/common/footer.js"></script>
-  <script src="/static/keys/keys.js?v=3"></script>
+  <script src="/static/keys/keys.js?v=3" data-page="keys"></script>
 </body>
 
 </html>

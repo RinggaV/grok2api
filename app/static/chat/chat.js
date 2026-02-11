@@ -108,7 +108,7 @@ function enableImageClickZoom(imgEl, src) {
 
 function showUserMsg(role, content, forceText = role !== 'assistant', userMessageIndex = null) {
   const wrap = document.createElement('div');
-  wrap.className = 'msg';
+  wrap.className = `msg msg-${role}`;
   wrap.innerHTML = `
     <div class="msg-role">${escapeHtml(role)}</div>
     <div class="msg-bubble"></div>
@@ -257,7 +257,24 @@ function enhanceMessageMedia(container) {
 
   container.classList.add('msg-has-images');
   if (images.length > 1) container.classList.add('msg-image-multi');
-  images.forEach((img) => img.classList.add('msg-image'));
+  const isAssistant = container.closest('.msg')?.classList.contains('msg-assistant');
+  images.forEach((img) => {
+    img.classList.add('msg-image');
+    if (!isAssistant) return;
+    if (img.parentElement?.classList.contains('msg-image-wrap')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'msg-image-wrap';
+    img.parentNode?.insertBefore(wrap, img);
+    wrap.appendChild(img);
+    const btn = document.createElement('a');
+    btn.className = 'msg-image-download';
+    btn.textContent = '下载';
+    btn.href = img.src;
+    btn.download = 'grok-image';
+    btn.target = '_blank';
+    btn.rel = 'noopener';
+    wrap.appendChild(btn);
+  });
 }
 
 function renderContent(container, content, forceText) {

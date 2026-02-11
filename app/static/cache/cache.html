@@ -10,13 +10,14 @@
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
   <link href="/static/common/common.css?v=3" rel="stylesheet">
-  <link href="/static/cache/cache.css?v=4" rel="stylesheet">
+  <link href="/static/cache/cache.css?v=4" rel="stylesheet" data-page="cache">
   <link href="/static/common/toast.css" rel="stylesheet">
 </head>
 
 <body class="min-h-screen flex flex-col" style="background-color: var(--bg);">
   <div id="app-header"></div>
 
+  <div id="app-page">
   <main class="space-y-6 flex-1 container mx-auto max-w-4xl px-6 py-8 fade-in">
     <div class="space-y-6">
       <div class="flex flex-wrap justify-between items-start gap-3">
@@ -147,7 +148,6 @@
     </div>
     </div>
   </main>
-  <div id="app-footer"></div>
 
   <div id="batch-actions"
     class="fixed bottom-8 left-1/2 -translate-x-1/2 z-20 bg-white border border-[var(--border)] rounded-full px-3 py-2 flex items-center shadow-lg gap-3 cursor-move select-none active:cursor-grabbing whitespace-nowrap">
@@ -184,6 +184,8 @@
       </div>
     </div>
   </dialog>
+  </div>
+  <div id="app-footer"></div>
 
   <dialog id="failure-dialog" class="confirm-dialog">
     <div class="confirm-dialog-body">
@@ -200,8 +202,8 @@
   <script src="/static/common/header.js?v=3"></script>
   <script src="/static/common/footer.js?v=1"></script>
   <script src="/static/common/toast.js"></script>
-  <script src="/static/cache/cache.js?v=5"></script>
-  <script src="/static/common/draggable.js"></script>
+  <script src="/static/cache/cache.js?v=5" data-page="cache"></script>
+  <script src="/static/common/draggable.js" data-page="cache"></script>
 </body>
 
 </html>

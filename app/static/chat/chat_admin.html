@@ -10,7 +10,7 @@
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
   <link href="/static/common/common.css?v=3" rel="stylesheet">
-  <link href="/static/chat/chat.css?v=3" rel="stylesheet">
+  <link href="/static/chat/chat.css?v=3" rel="stylesheet" data-page="chat">
   <link href="/static/common/toast.css" rel="stylesheet">
   <script>
     window.__CHAT_ADMIN__ = true;
@@ -21,6 +21,7 @@
   <div id="toast-container" class="toast-container"></div>
   <div id="app-header"></div>
 
+  <div id="app-page">
   <main class="flex-1 container mx-auto max-w-5xl px-6 py-6 fade-in space-y-4">
     <div class="card">
       <div class="card-title">连接配置</div>
@@ -36,11 +37,11 @@
         </div>
         <div class="col-span-6 md:col-span-1 flex items-center gap-2">
           <input id="stream-toggle" type="checkbox" class="checkbox" checked>
-          <label for="stream-toggle" class="text-sm">Stream</label>
+          <label for="stream-toggle" class="text-sm">流式输出</label>
         </div>
         <div class="col-span-12 md:col-span-2 flex items-center justify-end gap-2">
           <input id="think-toggle" type="checkbox" class="checkbox">
-          <label for="think-toggle" class="text-sm">Show Think</label>
+          <label for="think-toggle" class="text-sm">显示思考</label>
         </div>
       </div>
     </div>
@@ -188,6 +189,7 @@
       </div>
     </div>
   </main>
+  </div>
 
   <div id="app-footer"></div>
 
@@ -195,7 +197,7 @@
   <script src="/static/common/admin-auth.js"></script>
   <script src="/static/common/header.js?v=3"></script>
   <script src="/static/common/footer.js"></script>
-  <script src="/static/chat/chat.js?v=4"></script>
+  <script src="/static/chat/chat.js?v=4" data-page="chat"></script>
 </body>
 
 </html>

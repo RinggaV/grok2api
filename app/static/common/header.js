@@ -1,4 +1,5 @@
 let mobileNavKeydownHandler = null;
+let navLoadInFlight = null;
 
 function setupMobileDrawer(container) {
   const toggleBtn = container.querySelector('#mobile-nav-toggle');
@@ -68,6 +69,82 @@ function setupMobileDrawer(container) {
   });
 }
 
+function updateActiveNav(container, path) {
+  const links = container.querySelectorAll('a[data-nav]');
+  links.forEach((link) => {
+    const target = link.getAttribute('data-nav') || '';
+    if (target && path.startsWith(target)) {
+      link.classList.add('active');
+    } else {
+      link.classList.remove('active');
+    }
+  });
+}
+
+function collectPageAssets(doc) {
+  return {
+    styles: Array.from(doc.querySelectorAll('link[data-page]')),
+    scripts: Array.from(doc.querySelectorAll('script[data-page]')),
+  };
+}
+
+function replacePageAssets(assets) {
+  document.querySelectorAll('link[data-page]').forEach((el) => el.remove());
+  document.querySelectorAll('script[data-page]').forEach((el) => el.remove());
+  const head = document.head || document.documentElement;
+  assets.styles.forEach((link) => {
+    const clone = document.createElement('link');
+    Array.from(link.attributes).forEach((attr) => clone.setAttribute(attr.name, attr.value));
+    head.appendChild(clone);
+  });
+  assets.scripts.forEach((script) => {
+    const clone = document.createElement('script');
+    Array.from(script.attributes).forEach((attr) => clone.setAttribute(attr.name, attr.value));
+    if (!script.src) {
+      clone.textContent = script.textContent || '';
+    }
+    document.body.appendChild(clone);
+  });
+}
+
+function getPageContainer(doc) {
+  return doc.querySelector('#app-page') || doc.querySelector('main');
+}
+
+async function loadAdminPage(url, pushState) {
+  if (navLoadInFlight) navLoadInFlight.abort();
+  navLoadInFlight = new AbortController();
+  try {
+    const res = await fetch(url, { cache: 'no-store', signal: navLoadInFlight.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const nextContainer = getPageContainer(doc);
+    const currentContainer = document.querySelector('#app-page') || document.querySelector('main');
+    if (!nextContainer || !currentContainer) {
+      window.location.href = url;
+      return;
+    }
+    if (typeof window.__pageCleanup === 'function') {
+      try { window.__pageCleanup(); } catch (e) {}
+    }
+    const assets = collectPageAssets(doc);
+    document.title = doc.title || document.title;
+    document.body.className = doc.body.className || document.body.className;
+    currentContainer.replaceWith(nextContainer);
+    replacePageAssets(assets);
+    if (pushState) window.history.pushState({}, '', url);
+    const header = document.getElementById('app-header');
+    if (header) updateActiveNav(header, window.location.pathname);
+    if (typeof window.__pageInit === 'function') {
+      window.__pageInit();
+    }
+  } catch (e) {
+    if (e?.name === 'AbortError') return;
+    window.location.href = url;
+  }
+}
+
 async function loadAdminHeader() {
   const container = document.getElementById('app-header');
   if (!container) return;
@@ -75,22 +152,30 @@ async function loadAdminHeader() {
     const res = await fetch('/static/common/header.html?v=3', { cache: 'no-store' });
     if (!res.ok) return;
     container.innerHTML = await res.text();
-    const path = window.location.pathname;
-    const links = container.querySelectorAll('a[data-nav]');
-    links.forEach((link) => {
-      const target = link.getAttribute('data-nav') || '';
-      if (target && path.startsWith(target)) {
-        link.classList.add('active');
-      }
-    });
+    updateActiveNav(container, window.location.pathname);
     setupMobileDrawer(container);
     if (typeof updateStorageModeButton === 'function') {
       updateStorageModeButton();
     }
+    container.querySelectorAll('a[data-nav]').forEach((link) => {
+      link.addEventListener('click', (event) => {
+        const href = link.getAttribute('href') || '';
+        if (!href || href.startsWith('http')) return;
+        event.preventDefault();
+        if (href === window.location.pathname) return;
+        loadAdminPage(href, true);
+      });
+    });
   } catch (e) {
     // Fail silently to avoid breaking page load
   }
 }
+
+window.addEventListener('popstate', () => {
+  const path = window.location.pathname;
+  if (!path.startsWith('/admin/')) return;
+  loadAdminPage(path, false);
+});
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', loadAdminHeader);

@@ -250,6 +250,27 @@ function startLiveStats() {
   }, 5000);
 }
 
+function cleanup() {
+  if (liveStatsTimer) clearInterval(liveStatsTimer);
+  liveStatsTimer = null;
+}
+
+function mountPage() {
+  const pageKey = 'token';
+  if (window.__pageActive === pageKey) return;
+  window.__pageActive = pageKey;
+  init();
+}
+
+window.__pageInit = mountPage;
+window.__pageCleanup = cleanup;
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', mountPage);
+} else {
+  mountPage();
+}
+
 async function refreshStatsOnly() {
   try {
     const res = await fetch('/api/v1/admin/tokens', {
