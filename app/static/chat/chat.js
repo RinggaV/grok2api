@@ -95,6 +95,17 @@ function pickImageSrc(item) {
   return '';
 }
 
+function enableImageClickZoom(imgEl, src) {
+  if (!imgEl || !src) return;
+  imgEl.style.cursor = 'zoom-in';
+  imgEl.title = '点击放大查看';
+  imgEl.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    window.open(src, '_blank', 'noopener,noreferrer');
+  });
+}
+
 function showUserMsg(role, content, forceText = role !== 'assistant') {
   const wrap = document.createElement('div');
   wrap.className = 'msg';
@@ -449,6 +460,8 @@ function appendWaterfallImage(item, connectionIndex) {
       <span>${ratio || '-'} 路 ${elapsed > 0 ? `${elapsed}ms` : '-'}</span>
     </div>
   `;
+  const img = card.querySelector('img');
+  enableImageClickZoom(img, src);
   waterfall.prepend(card);
 
   imageContinuousCount += 1;
@@ -962,6 +975,7 @@ function updateImageCardCompleted(card, src, failed) {
   const img = document.createElement('img');
   img.alt = 'image';
   img.src = src;
+  enableImageClickZoom(img, src);
   card.insertBefore(img, card.firstChild);
 
   if (status) status.textContent = '完成';
