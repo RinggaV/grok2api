@@ -1303,18 +1303,21 @@ function cleanup() {
   localStatsTimer = null;
 }
 
-function mountPage() {
-  const pageKey = 'cache';
-  if (window.__pageActive === pageKey) return;
-  window.__pageActive = pageKey;
+function registerPage() {
+  const registry = window.__pageRegistry || (window.__pageRegistry = {});
+  registry.cache = {
+    init: () => init(),
+    cleanup: () => cleanup(),
+  };
+}
+
+function mountInitial() {
+  registerPage();
   init();
 }
 
-window.__pageInit = mountPage;
-window.__pageCleanup = cleanup;
-
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', mountPage);
+  document.addEventListener('DOMContentLoaded', mountInitial);
 } else {
-  mountPage();
+  mountInitial();
 }

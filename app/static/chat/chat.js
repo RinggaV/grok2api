@@ -1338,3 +1338,11 @@ if (document.readyState === 'loading') {
   init();
 }
 
+if (window.__CHAT_ADMIN__) {
+  const registry = window.__pageRegistry || (window.__pageRegistry = {});
+  registry.chat = {
+    init: () => init(),
+    cleanup: null,
+  };
+}
+

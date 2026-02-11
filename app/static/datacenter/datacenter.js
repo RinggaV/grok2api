@@ -281,18 +281,21 @@ function cleanup() {
   stopTimers();
 }
 
-function mountPage() {
-  const pageKey = 'datacenter';
-  if (window.__pageActive === pageKey) return;
-  window.__pageActive = pageKey;
+function registerPage() {
+  const registry = window.__pageRegistry || (window.__pageRegistry = {});
+  registry.datacenter = {
+    init: () => init(),
+    cleanup: () => cleanup(),
+  };
+}
+
+function mountInitial() {
+  registerPage();
   init();
 }
 
-window.__pageInit = mountPage;
-window.__pageCleanup = cleanup;
-
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', mountPage);
+  document.addEventListener('DOMContentLoaded', mountInitial);
 } else {
-  mountPage();
+  mountInitial();
 }

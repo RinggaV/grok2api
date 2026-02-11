@@ -400,18 +400,21 @@ async function copyToClipboard(text, btn) {
   }
 }
 
-function mountPage() {
-  const pageKey = 'config';
-  if (window.__pageActive === pageKey) return;
-  window.__pageActive = pageKey;
+function registerPage() {
+  const registry = window.__pageRegistry || (window.__pageRegistry = {});
+  registry.config = {
+    init: () => init(),
+    cleanup: null,
+  };
+}
+
+function mountInitial() {
+  registerPage();
   init();
 }
 
-window.__pageInit = mountPage;
-window.__pageCleanup = null;
-
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', mountPage);
+  document.addEventListener('DOMContentLoaded', mountInitial);
 } else {
-  mountPage();
+  mountInitial();
 }

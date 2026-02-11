@@ -1,5 +1,6 @@
 let mobileNavKeydownHandler = null;
 let navLoadInFlight = null;
+let activePageKey = null;
 
 function setupMobileDrawer(container) {
   const toggleBtn = container.querySelector('#mobile-nav-toggle');
@@ -81,6 +82,40 @@ function updateActiveNav(container, path) {
   });
 }
 
+function ensureRegistry() {
+  if (!window.__pageRegistry) window.__pageRegistry = {};
+  return window.__pageRegistry;
+}
+
+function getPageKeyByPath(pathname) {
+  const path = String(pathname || '');
+  if (path.startsWith('/admin/token')) return 'token';
+  if (path.startsWith('/admin/keys')) return 'keys';
+  if (path.startsWith('/admin/chat')) return 'chat';
+  if (path.startsWith('/admin/datacenter')) return 'datacenter';
+  if (path.startsWith('/admin/config')) return 'config';
+  if (path.startsWith('/admin/cache')) return 'cache';
+  return null;
+}
+
+function runPageCleanup(pageKey) {
+  if (!pageKey) return;
+  const registry = ensureRegistry();
+  const entry = registry[pageKey];
+  if (entry && typeof entry.cleanup === 'function') {
+    try { entry.cleanup(); } catch (e) {}
+  }
+}
+
+function runPageInit(pageKey) {
+  if (!pageKey) return;
+  const registry = ensureRegistry();
+  const entry = registry[pageKey];
+  if (entry && typeof entry.init === 'function') {
+    entry.init();
+  }
+}
+
 function collectPageAssets(doc) {
   return {
     styles: Array.from(doc.querySelectorAll('link[data-page]')),
@@ -90,19 +125,25 @@ function collectPageAssets(doc) {
 
 function replacePageAssets(assets) {
   document.querySelectorAll('link[data-page]').forEach((el) => el.remove());
-  document.querySelectorAll('script[data-page]').forEach((el) => el.remove());
   const head = document.head || document.documentElement;
   assets.styles.forEach((link) => {
+    const href = link.getAttribute('href') || '';
+    if (!href) return;
+    const existing = document.querySelector(`link[rel="stylesheet"][href="${href}"]`);
+    if (existing) {
+      existing.setAttribute('data-page', link.getAttribute('data-page') || '');
+      return;
+    }
     const clone = document.createElement('link');
     Array.from(link.attributes).forEach((attr) => clone.setAttribute(attr.name, attr.value));
     head.appendChild(clone);
   });
   assets.scripts.forEach((script) => {
+    const src = script.getAttribute('src') || '';
+    if (!src) return;
+    if (document.querySelector(`script[src="${src}"]`)) return;
     const clone = document.createElement('script');
     Array.from(script.attributes).forEach((attr) => clone.setAttribute(attr.name, attr.value));
-    if (!script.src) {
-      clone.textContent = script.textContent || '';
-    }
     document.body.appendChild(clone);
   });
 }
@@ -125,9 +166,7 @@ async function loadAdminPage(url, pushState) {
       window.location.href = url;
       return;
     }
-    if (typeof window.__pageCleanup === 'function') {
-      try { window.__pageCleanup(); } catch (e) {}
-    }
+    runPageCleanup(activePageKey);
     const assets = collectPageAssets(doc);
     document.title = doc.title || document.title;
     document.body.className = doc.body.className || document.body.className;
@@ -136,9 +175,8 @@ async function loadAdminPage(url, pushState) {
     if (pushState) window.history.pushState({}, '', url);
     const header = document.getElementById('app-header');
     if (header) updateActiveNav(header, window.location.pathname);
-    if (typeof window.__pageInit === 'function') {
-      window.__pageInit();
-    }
+    activePageKey = getPageKeyByPath(window.location.pathname);
+    runPageInit(activePageKey);
   } catch (e) {
     if (e?.name === 'AbortError') return;
     window.location.href = url;
