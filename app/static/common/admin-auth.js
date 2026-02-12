@@ -3,6 +3,41 @@ const APP_KEY_ENC_PREFIX = 'enc:v1:';
 const APP_KEY_XOR_PREFIX = 'enc:xor:';
 const APP_KEY_SECRET = 'grok2api-admin-key';
 let cachedApiKey = null;
+const ADMIN_QUERY = window.location.search || '';
+
+function withAdminQuery(url) {
+  if (!ADMIN_QUERY) return url;
+  try {
+    const u = new URL(url, window.location.origin);
+    if (u.search) return u.toString();
+    if (u.pathname.startsWith('/api/')) {
+      u.search = ADMIN_QUERY;
+      return u.toString();
+    }
+    return u.toString();
+  } catch (e) {
+    return url;
+  }
+}
+
+const _fetch = window.fetch.bind(window);
+window.fetch = (input, init) => {
+  if (!ADMIN_QUERY) return _fetch(input, init);
+  try {
+    if (typeof input === 'string') {
+      return _fetch(withAdminQuery(input), init);
+    }
+    if (input instanceof Request) {
+      const nextUrl = withAdminQuery(input.url);
+      if (nextUrl === input.url) return _fetch(input, init);
+      const nextReq = new Request(nextUrl, input);
+      return _fetch(nextReq, init);
+    }
+  } catch (e) {
+    // fall through
+  }
+  return _fetch(input, init);
+};
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
