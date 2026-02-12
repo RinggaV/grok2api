@@ -263,16 +263,7 @@ function registerPage() {
   };
 }
 
-function mountInitial() {
-  registerPage();
-  init();
-}
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', mountInitial);
-} else {
-  mountInitial();
-}
+registerPage();
 
 async function refreshStatsOnly() {
   try {

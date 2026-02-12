@@ -2,6 +2,7 @@ let mobileNavKeydownHandler = null;
 let navLoadInFlight = null;
 let activePageKey = null;
 const scriptLoaders = new Map();
+window.__pageRegistry = window.__pageRegistry || {};
 
 function setupMobileDrawer(container) {
   const toggleBtn = container.querySelector('#mobile-nav-toggle');
@@ -218,6 +219,9 @@ async function loadAdminHeader() {
     if (typeof updateStorageModeButton === 'function') {
       updateStorageModeButton();
     }
+    window.__adminQuery = window.location.search || '';
+    activePageKey = getPageKeyByPath(window.location.pathname);
+    runPageInit(activePageKey);
     container.querySelectorAll('a[data-nav]').forEach((link) => {
       link.addEventListener('click', (event) => {
         const href = link.getAttribute('href') || '';

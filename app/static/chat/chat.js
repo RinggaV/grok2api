@@ -1332,17 +1332,15 @@ async function streamVideo(body, bubbleEl) {
   }
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  init();
-}
-
 if (window.__CHAT_ADMIN__) {
   const registry = window.__pageRegistry || (window.__pageRegistry = {});
   registry.chat = {
     init: () => init(),
     cleanup: null,
   };
+} else if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
 }
 
