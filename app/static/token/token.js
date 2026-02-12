@@ -1375,7 +1375,7 @@ async function startBatchDelete() {
   processDeleteQueue();
 }
 
-let confirmResolver = null;
+var confirmResolver = null;
 
 function setupConfirmDialog() {
   const dialog = document.getElementById('confirm-dialog');
