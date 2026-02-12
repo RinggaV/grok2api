@@ -1,13 +1,13 @@
 var apiKey = '';
-let cachedRows = [];
-let displayRows = [];
-let editingKey = null;
-let isSubmitting = false;
-let keyModalEscBound = false;
-const MODAL_TRANSITION_MS = 200;
-let keyModalHideTimer = null;
+var cachedRows = [];
+var displayRows = [];
+var editingKey = null;
+var isSubmitting = false;
+var keyModalEscBound = false;
+var MODAL_TRANSITION_MS = 200;
+var keyModalHideTimer = null;
 
-const keyFilterState = {
+var keyFilterState = {
   search: '',
   status: 'all',
 };

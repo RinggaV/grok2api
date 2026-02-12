@@ -1,21 +1,21 @@
-﻿const STORAGE_KEY = 'grok2api_user_api_key';
+﻿var STORAGE_KEY = 'grok2api_user_api_key';
 
-let currentTab = 'chat';
-let models = [];
-let chatMessages = [];
-let chatAttachments = []; // { file, previewUrl }
-let videoAttachments = [];
-let imageGenerationMethod = 'legacy';
-let imageGenerationExperimental = false;
-let imageContinuousSockets = [];
-let imageContinuousRunning = false;
-let imageContinuousCount = 0;
-let imageContinuousLatencyTotal = 0;
-let imageContinuousLatencyCount = 0;
-let imageContinuousActive = 0;
-let imageContinuousLastError = '';
-let imageContinuousRunToken = 0;
-let imageContinuousDesiredConcurrency = 1;
+var currentTab = 'chat';
+var models = [];
+var chatMessages = [];
+var chatAttachments = []; // { file, previewUrl }
+var videoAttachments = [];
+var imageGenerationMethod = 'legacy';
+var imageGenerationExperimental = false;
+var imageContinuousSockets = [];
+var imageContinuousRunning = false;
+var imageContinuousCount = 0;
+var imageContinuousLatencyTotal = 0;
+var imageContinuousLatencyCount = 0;
+var imageContinuousActive = 0;
+var imageContinuousLastError = '';
+var imageContinuousRunToken = 0;
+var imageContinuousDesiredConcurrency = 1;
 
 function q(id) {
   return document.getElementById(id);

@@ -1,6 +1,6 @@
 ﻿var apiKey = '';
-let currentConfig = {};
-const NUMERIC_FIELDS = new Set([
+var currentConfig = {};
+var NUMERIC_FIELDS = new Set([
   'timeout',
   'max_retry',
   'refresh_interval_hours',
@@ -20,7 +20,7 @@ const NUMERIC_FIELDS = new Set([
   'default_count'
 ]);
 
-const LOCALE_MAP = {
+var LOCALE_MAP = {
   "app": {
     "label": "应用设置",
     "api_key": { title: "API 密钥", desc: "调用 Grok2API 服务所需的 Bearer Token，请妥善保管。" },

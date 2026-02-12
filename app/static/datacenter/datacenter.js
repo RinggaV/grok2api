@@ -1,10 +1,10 @@
 var apiKey = '';
-let metricsTimer = null;
-let logsTimer = null;
+var metricsTimer = null;
+var logsTimer = null;
 
-let hourlyChart = null;
-let dailyChart = null;
-let modelsChart = null;
+var hourlyChart = null;
+var dailyChart = null;
+var modelsChart = null;
 
 function $(id) {
   return document.getElementById(id);

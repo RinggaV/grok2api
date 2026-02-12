@@ -862,7 +862,7 @@ async function pollAutoRegisterStatus() {
 
 
 // Modal Logic
-let currentEditIndex = -1;
+var currentEditIndex = -1;
 
 function openEditModalByKey(tokenKey) {
   const idx = findTokenIndexByKey(tokenKey);
