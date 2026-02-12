@@ -1,21 +1,21 @@
 var apiKey = '';
-let currentScope = 'none';
-let currentToken = '';
-let currentSection = 'image';
-const accountMap = new Map();
-const selectedTokens = new Set();
-const selectedLocal = {
+var currentScope = 'none';
+var currentToken = '';
+var currentSection = 'image';
+var accountMap = new Map();
+var selectedTokens = new Set();
+var selectedLocal = {
   image: new Set(),
   video: new Set()
 };
-const ui = {};
-const loadFailed = new Map();
-const deleteFailed = new Map();
-let currentBatchAction = null;
-let lastBatchAction = null;
-let isLocalDeleting = false;
-let localStatsTimer = null;
-const cacheListState = {
+var ui = {};
+var loadFailed = new Map();
+var deleteFailed = new Map();
+var currentBatchAction = null;
+var lastBatchAction = null;
+var isLocalDeleting = false;
+var localStatsTimer = null;
+var cacheListState = {
   image: { loaded: false, visible: false, items: [] },
   video: { loaded: false, visible: false, items: [] }
 };
