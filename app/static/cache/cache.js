@@ -135,7 +135,7 @@ function ensureUI() {
   if (!ui.batchActions) cacheUI();
 }
 
-let confirmResolver = null;
+var confirmResolver = null;
 
 function setupConfirmDialog() {
   const dialog = ui.confirmDialog;
@@ -221,16 +221,16 @@ function calcPercent(processed, total) {
 }
 
 const accountStates = new Map();
-let isBatchLoading = false;
-let isLoadPaused = false;
-let batchQueue = [];
-let batchTokens = [];
-let batchTotal = 0;
-let batchProcessed = 0;
-let isBatchDeleting = false;
-let isDeletePaused = false;
-let deleteTotal = 0;
-let deleteProcessed = 0;
+var isBatchLoading = false;
+var isLoadPaused = false;
+var batchQueue = [];
+var batchTokens = [];
+var batchTotal = 0;
+var batchProcessed = 0;
+var isBatchDeleting = false;
+var isDeletePaused = false;
+var deleteTotal = 0;
+var deleteProcessed = 0;
 const BATCH_SIZE = 10;
 
 async function loadStats(options = {}) {
