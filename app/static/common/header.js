@@ -188,14 +188,14 @@ async function loadAdminPage(url, pushState) {
     document.title = doc.title || document.title;
     document.body.className = doc.body.className || document.body.className;
     currentContainer.replaceWith(nextContainer);
-    await ensurePageAssets(assets);
+    window.__adminQuery = finalSearch || window.location.search || '';
     if (pushState) window.history.pushState({}, '', `${finalPath}${finalSearch}`);
     const normalizedPath = normalizeAdminPath(finalPath);
     if (normalizedPath !== finalPath || finalSearch !== window.location.search) {
       const nextUrl = `${normalizedPath}${finalSearch}`;
       window.history.replaceState({}, '', nextUrl);
     }
-    window.__adminQuery = finalSearch || window.location.search || '';
+    await ensurePageAssets(assets);
     const header = document.getElementById('app-header');
     if (header) updateActiveNav(header, normalizedPath);
     activePageKey = getPageKeyByPath(normalizedPath);
@@ -210,7 +210,7 @@ async function loadAdminHeader() {
   const container = document.getElementById('app-header');
   if (!container) return;
   try {
-    const res = await fetch('/static/common/header.html?v=3', { cache: 'no-store' });
+    const res = await fetch('/static/common/header.html?v=4', { cache: 'no-store' });
     if (!res.ok) return;
     container.innerHTML = await res.text();
     updateActiveNav(container, window.location.pathname);
