@@ -4,6 +4,32 @@ let activePageKey = null;
 const scriptLoaders = new Map();
 window.__pageRegistry = window.__pageRegistry || {};
 const ADMIN_QUERY_STORAGE_KEY = 'grok2api_admin_query';
+const ADMIN_DEBUG_KEY = 'grok2api_admin_debug';
+
+function isAdminDebug() {
+  try {
+    return localStorage.getItem(ADMIN_DEBUG_KEY) === '1';
+  } catch (e) {
+    return false;
+  }
+}
+
+function adminDebug(...args) {
+  if (!isAdminDebug()) return;
+  try {
+    console.log('[AdminDebug]', ...args);
+  } catch (e) {}
+}
+
+window.adminDebug = adminDebug;
+window.enableAdminDebug = () => {
+  try { localStorage.setItem(ADMIN_DEBUG_KEY, '1'); } catch (e) {}
+  console.log('[AdminDebug] enabled');
+};
+window.disableAdminDebug = () => {
+  try { localStorage.removeItem(ADMIN_DEBUG_KEY); } catch (e) {}
+  console.log('[AdminDebug] disabled');
+};
 
 function setupMobileDrawer(container) {
   const toggleBtn = container.querySelector('#mobile-nav-toggle');
@@ -152,7 +178,10 @@ function runPageInit(pageKey) {
   const registry = ensureRegistry();
   const entry = registry[pageKey];
   if (entry && typeof entry.init === 'function') {
+    adminDebug('runPageInit', { pageKey, registryKeys: Object.keys(registry || {}) });
     entry.init();
+  } else {
+    adminDebug('runPageInit:missing', { pageKey, registryKeys: Object.keys(registry || {}) });
   }
 }
 
@@ -225,16 +254,19 @@ async function loadAdminPage(url, pushState) {
   if (navLoadInFlight) navLoadInFlight.abort();
   navLoadInFlight = new AbortController();
   try {
+    adminDebug('loadAdminPage:start', { url, pushState });
     const res = await fetch(url, { cache: 'no-store', signal: navLoadInFlight.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const html = await res.text();
     const previousQuery = getAdminQuery();
     const buildSha = res.headers.get('x-grok2api-build') || '';
+    adminDebug('loadAdminPage:response', { status: res.status, resUrl: res.url, buildSha });
     const finalUrl = new URL(res.url || url, window.location.origin);
     const finalPath = finalUrl.pathname || window.location.pathname;
     const finalSearch = finalUrl.search || '';
     const buildQuery = buildSha ? `?v=${encodeURIComponent(buildSha)}` : '';
     const effectiveSearch = finalSearch || window.location.search || buildQuery || previousQuery;
+    adminDebug('loadAdminPage:resolved', { finalPath, finalSearch, effectiveSearch });
     const doc = new DOMParser().parseFromString(html, 'text/html');
     const nextContainer = getPageContainer(doc);
     const currentContainer = document.querySelector('#app-page') || document.querySelector('main');
@@ -251,6 +283,7 @@ async function loadAdminPage(url, pushState) {
     setStoredAdminQuery(window.__adminQuery);
     const normalizedPath = normalizeAdminPath(finalPath);
     const nextUrl = `${normalizedPath}${effectiveSearch || previousQuery || ''}`;
+    adminDebug('loadAdminPage:state', { normalizedPath, nextUrl });
     if (pushState) {
       window.history.pushState({}, '', nextUrl);
     } else if (normalizedPath !== window.location.pathname || finalSearch !== window.location.search) {
@@ -264,6 +297,7 @@ async function loadAdminPage(url, pushState) {
     runPageInit(activePageKey);
   } catch (e) {
     if (e?.name === 'AbortError') return;
+    adminDebug('loadAdminPage:error', { message: e?.message || String(e), url });
     window.location.href = url;
   }
 }
@@ -272,6 +306,7 @@ async function loadAdminHeader() {
   const container = document.getElementById('app-header');
   if (!container) return;
   try {
+    adminDebug('loadAdminHeader:start', { path: window.location.pathname, search: window.location.search });
     const res = await fetch('/static/common/header.html?v=4', { cache: 'no-store' });
     if (!res.ok) return;
     container.innerHTML = await res.text();
@@ -289,6 +324,7 @@ async function loadAdminHeader() {
       setStoredAdminQuery(window.__adminQuery);
     }
     activePageKey = getPageKeyByPath(normalizedPath);
+    adminDebug('loadAdminHeader:state', { normalizedPath, adminQuery: window.__adminQuery || '' });
     runPageInit(activePageKey);
     container.querySelectorAll('a[data-nav]').forEach((link) => {
       link.addEventListener('click', (event) => {

@@ -24,6 +24,12 @@ var filterState = {
   statusExhausted: false,
 };
 
+function adminDebug(...args) {
+  if (typeof window.adminDebug === 'function') {
+    window.adminDebug(...args);
+  }
+}
+
 function normalizeSsoToken(token) {
   const v = String(token || '').trim();
   return v.startsWith('sso=') ? v.slice(4).trim() : v;
@@ -235,8 +241,13 @@ if (document.readyState === 'loading') {
 }
 
 async function init() {
+  adminDebug('token:init:start');
   apiKey = await ensureApiKey();
-  if (apiKey === null) return;
+  if (apiKey === null) {
+    adminDebug('token:init:no-key');
+    return;
+  }
+  adminDebug('token:init:ready');
   setupConfirmDialog();
   loadData();
   startLiveStats();
@@ -251,6 +262,7 @@ function startLiveStats() {
 }
 
 function cleanup() {
+  adminDebug('token:cleanup');
   if (liveStatsTimer) clearInterval(liveStatsTimer);
   liveStatsTimer = null;
 }
@@ -321,13 +333,15 @@ async function refreshStatsOnly() {
     setText('stat-image-quota', imageQuota.toLocaleString());
     setText('stat-total-calls', totalCalls.toLocaleString());
   } catch (e) {
+    adminDebug('token:refreshStatsOnly:error', { message: e?.message || String(e) });
     // Silent by design; do not spam toasts.
   }
 }
 
 async function loadData() {
   try {
-    const { data } = await fetchAdminJsonCached('tokens', '/api/v1/admin/tokens', {
+    adminDebug('token:loadData:start');
+    const { data, fromCache } = await fetchAdminJsonCached('tokens', '/api/v1/admin/tokens', {
       headers: buildAuthHeaders(apiKey)
     });
     allTokens = data || {};
@@ -335,8 +349,14 @@ async function loadData() {
     updateStats(allTokens);
     applyFilters();
     renderTable();
+    adminDebug('token:loadData:ok', {
+      pools: Object.keys(allTokens || {}).length,
+      total: flatTokens.length,
+      fromCache: Boolean(fromCache),
+    });
   } catch (e) {
     if (String(e?.message || '').includes('401')) logout();
+    adminDebug('token:loadData:error', { message: e?.message || String(e) });
     showToast('加载失败: ' + e.message, 'error');
   }
 }
@@ -406,6 +426,15 @@ function renderTable() {
   const tbody = document.getElementById('token-table-body');
   const loading = document.getElementById('loading');
   const emptyState = document.getElementById('empty-state');
+
+  if (!tbody || !loading || !emptyState) {
+    adminDebug('token:renderTable:missing-dom', {
+      hasBody: Boolean(tbody),
+      hasLoading: Boolean(loading),
+      hasEmpty: Boolean(emptyState),
+    });
+    return;
+  }
 
   tbody.innerHTML = '';
   loading.classList.add('hidden');
@@ -1460,4 +1489,7 @@ function escapeHtml(text) {
 
 
 
-window.onload = init;
+window.onload = () => {
+  adminDebug('token:onload');
+  init();
+};

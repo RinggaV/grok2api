@@ -21,6 +21,9 @@ var cacheListState = {
 };
 
 async function init() {
+  if (typeof window.adminDebug === 'function') {
+    window.adminDebug('cache:init');
+  }
   apiKey = await ensureApiKey();
   if (apiKey === null) return;
   cacheUI();
@@ -141,6 +144,9 @@ function ensureUI() {
     || !ui.localVideoBody
     || !ui.localVideoBody.isConnected;
   if (needsRefresh) cacheUI();
+  if (needsRefresh && typeof window.adminDebug === 'function') {
+    window.adminDebug('cache:ensureUI:refresh');
+  }
 }
 
 var confirmResolver = null;
@@ -245,6 +251,9 @@ async function loadStats(options = {}) {
   const silent = options.silent === true;
   try {
     ensureUI();
+    if (typeof window.adminDebug === 'function') {
+      window.adminDebug('cache:loadStats:start', { scope: currentScope, token: currentToken, options });
+    }
     const merge = options.merge === true;
     const params = new URLSearchParams();
     if (options.tokens && options.tokens.length) {
@@ -261,7 +270,7 @@ async function loadStats(options = {}) {
     }
     const url = `/api/v1/admin/cache${params.toString() ? `?${params.toString()}` : ''}`;
     const cacheKey = `cache:stats:${currentScope}`;
-    const { data } = await fetchAdminJsonCached(cacheKey, url, {
+    const { data, fromCache } = await fetchAdminJsonCached(cacheKey, url, {
       headers: buildAuthHeaders(apiKey)
     });
     if (!merge) {
@@ -330,6 +339,9 @@ async function loadStats(options = {}) {
     }
 
     renderAccountTable(data);
+    if (typeof window.adminDebug === 'function') {
+      window.adminDebug('cache:loadStats:ok', { scope: currentScope, fromCache: Boolean(fromCache) });
+    }
     return data;
   } catch (e) {
     if (String(e?.message || '').includes('401')) {
@@ -337,6 +349,9 @@ async function loadStats(options = {}) {
       return null;
     }
     if (!silent) showToast('加载统计失败', 'error');
+    if (typeof window.adminDebug === 'function') {
+      window.adminDebug('cache:loadStats:error', { message: e?.message || String(e) });
+    }
     return null;
   }
 }
@@ -784,9 +799,16 @@ async function loadLocalCacheList(type) {
     const params = new URLSearchParams({ type, page: '1', page_size: '1000' });
     const url = `/api/v1/admin/cache/list?${params.toString()}`;
     const cacheKey = `cache:list:${type}`;
-    const { data } = await fetchAdminJsonCached(cacheKey, url, {
+    const { data, fromCache } = await fetchAdminJsonCached(cacheKey, url, {
       headers: buildAuthHeaders(apiKey)
     });
+    if (typeof window.adminDebug === 'function') {
+      window.adminDebug('cache:loadLocalCacheList:ok', {
+        type,
+        count: Array.isArray(data.items) ? data.items.length : 0,
+        fromCache: Boolean(fromCache),
+      });
+    }
     const items = Array.isArray(data.items) ? data.items : [];
     cacheListState[type].items = items;
     cacheListState[type].loaded = true;
@@ -800,6 +822,9 @@ async function loadLocalCacheList(type) {
     if (String(e?.message || '').includes('401')) {
       logout();
       return;
+    }
+    if (typeof window.adminDebug === 'function') {
+      window.adminDebug('cache:loadLocalCacheList:error', { type, message: e?.message || String(e) });
     }
     body.innerHTML = `<tr><td colspan="5">加载失败</td></tr>`;
   }
@@ -1309,6 +1334,9 @@ async function clearOnlineCache(targetToken = '', skipConfirm = false) {
 }
 
 function cleanup() {
+  if (typeof window.adminDebug === 'function') {
+    window.adminDebug('cache:cleanup');
+  }
   if (localStatsTimer) clearInterval(localStatsTimer);
   localStatsTimer = null;
 }
