@@ -3,15 +3,19 @@ const APP_KEY_ENC_PREFIX = 'enc:v1:';
 const APP_KEY_XOR_PREFIX = 'enc:xor:';
 const APP_KEY_SECRET = 'grok2api-admin-key';
 let cachedApiKey = null;
-const ADMIN_QUERY = window.location.search || '';
+function getAdminQuery() {
+  if (typeof window.__adminQuery === 'string') return window.__adminQuery;
+  return window.location.search || '';
+}
 
 function withAdminQuery(url) {
-  if (!ADMIN_QUERY) return url;
+  const adminQuery = getAdminQuery();
+  if (!adminQuery) return url;
   try {
     const u = new URL(url, window.location.origin);
     if (u.search) return u.toString();
     if (u.pathname.startsWith('/api/')) {
-      u.search = ADMIN_QUERY;
+      u.search = adminQuery;
       return u.toString();
     }
     return u.toString();
@@ -22,7 +26,8 @@ function withAdminQuery(url) {
 
 const _fetch = window.fetch.bind(window);
 window.fetch = (input, init) => {
-  if (!ADMIN_QUERY) return _fetch(input, init);
+  const adminQuery = getAdminQuery();
+  if (!adminQuery) return _fetch(input, init);
   try {
     if (typeof input === 'string') {
       return _fetch(withAdminQuery(input), init);

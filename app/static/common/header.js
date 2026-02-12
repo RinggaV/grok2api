@@ -99,6 +99,10 @@ function getPageKeyByPath(pathname) {
   return null;
 }
 
+function normalizeAdminPath(pathname) {
+  return String(pathname || '');
+}
+
 function runPageCleanup(pageKey) {
   if (!pageKey) return;
   const registry = ensureRegistry();
@@ -169,6 +173,9 @@ async function loadAdminPage(url, pushState) {
     const res = await fetch(url, { cache: 'no-store', signal: navLoadInFlight.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const html = await res.text();
+    const finalUrl = new URL(res.url || url, window.location.origin);
+    const finalPath = finalUrl.pathname || window.location.pathname;
+    const finalSearch = finalUrl.search || '';
     const doc = new DOMParser().parseFromString(html, 'text/html');
     const nextContainer = getPageContainer(doc);
     const currentContainer = document.querySelector('#app-page') || document.querySelector('main');
@@ -182,10 +189,16 @@ async function loadAdminPage(url, pushState) {
     document.body.className = doc.body.className || document.body.className;
     currentContainer.replaceWith(nextContainer);
     await ensurePageAssets(assets);
-    if (pushState) window.history.pushState({}, '', url);
+    if (pushState) window.history.pushState({}, '', `${finalPath}${finalSearch}`);
+    const normalizedPath = normalizeAdminPath(finalPath);
+    if (normalizedPath !== finalPath || finalSearch !== window.location.search) {
+      const nextUrl = `${normalizedPath}${finalSearch}`;
+      window.history.replaceState({}, '', nextUrl);
+    }
+    window.__adminQuery = finalSearch || window.location.search || '';
     const header = document.getElementById('app-header');
-    if (header) updateActiveNav(header, window.location.pathname);
-    activePageKey = getPageKeyByPath(window.location.pathname);
+    if (header) updateActiveNav(header, normalizedPath);
+    activePageKey = getPageKeyByPath(normalizedPath);
     runPageInit(activePageKey);
   } catch (e) {
     if (e?.name === 'AbortError') return;
