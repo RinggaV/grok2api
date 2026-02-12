@@ -1,4 +1,4 @@
-let apiKey = '';
+var apiKey = '';
 let metricsTimer = null;
 let logsTimer = null;
 

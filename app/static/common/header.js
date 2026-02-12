@@ -97,11 +97,24 @@ function getPageKeyByPath(pathname) {
   if (path.startsWith('/admin/datacenter')) return 'datacenter';
   if (path.startsWith('/admin/config')) return 'config';
   if (path.startsWith('/admin/cache')) return 'cache';
+  if (path.startsWith('/token/token')) return 'token';
+  if (path.startsWith('/keys/keys')) return 'keys';
+  if (path.startsWith('/chat/chat_admin')) return 'chat';
+  if (path.startsWith('/datacenter/datacenter')) return 'datacenter';
+  if (path.startsWith('/config/config')) return 'config';
+  if (path.startsWith('/cache/cache')) return 'cache';
   return null;
 }
 
 function normalizeAdminPath(pathname) {
-  return String(pathname || '');
+  const path = String(pathname || '');
+  if (path.startsWith('/token/token')) return '/admin/token';
+  if (path.startsWith('/keys/keys')) return '/admin/keys';
+  if (path.startsWith('/chat/chat_admin')) return '/admin/chat';
+  if (path.startsWith('/datacenter/datacenter')) return '/admin/datacenter';
+  if (path.startsWith('/config/config')) return '/admin/config';
+  if (path.startsWith('/cache/cache')) return '/admin/cache';
+  return path;
 }
 
 function runPageCleanup(pageKey) {
@@ -190,10 +203,11 @@ async function loadAdminPage(url, pushState) {
     document.body.className = doc.body.className || document.body.className;
     currentContainer.replaceWith(nextContainer);
     window.__adminQuery = finalSearch || window.location.search || '';
-    if (pushState) window.history.pushState({}, '', `${finalPath}${finalSearch}`);
     const normalizedPath = normalizeAdminPath(finalPath);
-    if (normalizedPath !== finalPath || finalSearch !== window.location.search) {
-      const nextUrl = `${normalizedPath}${finalSearch}`;
+    const nextUrl = `${normalizedPath}${finalSearch}`;
+    if (pushState) {
+      window.history.pushState({}, '', nextUrl);
+    } else if (normalizedPath !== window.location.pathname || finalSearch !== window.location.search) {
       window.history.replaceState({}, '', nextUrl);
     }
     await ensurePageAssets(assets);

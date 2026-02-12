@@ -1,4 +1,4 @@
-let apiKey = '';
+var apiKey = '';
 let currentScope = 'none';
 let currentToken = '';
 let currentSection = 'image';

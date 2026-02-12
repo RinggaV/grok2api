@@ -1,4 +1,4 @@
-﻿let apiKey = '';
+﻿var apiKey = '';
 let currentConfig = {};
 const NUMERIC_FIELDS = new Set([
   'timeout',

@@ -1,4 +1,4 @@
-let apiKey = '';
+var apiKey = '';
 let cachedRows = [];
 let displayRows = [];
 let editingKey = null;

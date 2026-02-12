@@ -1,4 +1,4 @@
-﻿let apiKey = '';
+﻿var apiKey = '';
 let allTokens = {};
 let flatTokens = [];
 let isBatchProcessing = false;
