@@ -24,25 +24,51 @@ function withAdminQuery(url) {
   }
 }
 
+const ADMIN_FETCH_TIMEOUT_MS = 5000;
 const _fetch = window.fetch.bind(window);
 window.fetch = (input, init) => {
   const adminQuery = getAdminQuery();
   if (!adminQuery) return _fetch(input, init);
   try {
     if (typeof input === 'string') {
-      return _fetch(withAdminQuery(input), init);
+      const nextUrl = withAdminQuery(input);
+      return fetchWithAdminTimeout(nextUrl, init);
     }
     if (input instanceof Request) {
       const nextUrl = withAdminQuery(input.url);
-      if (nextUrl === input.url) return _fetch(input, init);
+      if (nextUrl === input.url) return fetchWithAdminTimeout(input, init);
       const nextReq = new Request(nextUrl, input);
-      return _fetch(nextReq, init);
+      return fetchWithAdminTimeout(nextReq, init);
     }
   } catch (e) {
     // fall through
   }
   return _fetch(input, init);
 };
+
+function isAdminApiRequest(targetUrl) {
+  try {
+    const url = typeof targetUrl === 'string' ? new URL(targetUrl, window.location.origin) : new URL(targetUrl.url);
+    return url.pathname.startsWith('/api/v1/admin/');
+  } catch (e) {
+    return false;
+  }
+}
+
+function fetchWithAdminTimeout(input, init) {
+  if (!isAdminApiRequest(input)) return _fetch(input, init);
+  const existingSignal = init?.signal || (input instanceof Request ? input.signal : null);
+  if (existingSignal) return _fetch(input, init);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), ADMIN_FETCH_TIMEOUT_MS);
+  const nextInit = Object.assign({}, init, { signal: controller.signal });
+  return _fetch(input, nextInit)
+    .catch((err) => {
+      if (controller.signal.aborted) throw new Error('请求超时');
+      throw err;
+    })
+    .finally(() => clearTimeout(timeout));
+}
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
