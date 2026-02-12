@@ -24,7 +24,7 @@ var filterState = {
   statusExhausted: false,
 };
 
-function adminDebug(...args) {
+function logAdminDebug(...args) {
   if (typeof window.adminDebug === 'function') {
     window.adminDebug(...args);
   }
@@ -241,13 +241,13 @@ if (document.readyState === 'loading') {
 }
 
 async function init() {
-  adminDebug('token:init:start');
+  logAdminDebug('token:init:start');
   apiKey = await ensureApiKey();
   if (apiKey === null) {
-    adminDebug('token:init:no-key');
+    logAdminDebug('token:init:no-key');
     return;
   }
-  adminDebug('token:init:ready');
+  logAdminDebug('token:init:ready');
   setupConfirmDialog();
   loadData();
   startLiveStats();
@@ -262,7 +262,7 @@ function startLiveStats() {
 }
 
 function cleanup() {
-  adminDebug('token:cleanup');
+  logAdminDebug('token:cleanup');
   if (liveStatsTimer) clearInterval(liveStatsTimer);
   liveStatsTimer = null;
 }
@@ -333,14 +333,14 @@ async function refreshStatsOnly() {
     setText('stat-image-quota', imageQuota.toLocaleString());
     setText('stat-total-calls', totalCalls.toLocaleString());
   } catch (e) {
-    adminDebug('token:refreshStatsOnly:error', { message: e?.message || String(e) });
+    logAdminDebug('token:refreshStatsOnly:error', { message: e?.message || String(e) });
     // Silent by design; do not spam toasts.
   }
 }
 
 async function loadData() {
   try {
-    adminDebug('token:loadData:start');
+    logAdminDebug('token:loadData:start');
     const { data, fromCache } = await fetchAdminJsonCached('tokens', '/api/v1/admin/tokens', {
       headers: buildAuthHeaders(apiKey)
     });
@@ -349,14 +349,14 @@ async function loadData() {
     updateStats(allTokens);
     applyFilters();
     renderTable();
-    adminDebug('token:loadData:ok', {
+    logAdminDebug('token:loadData:ok', {
       pools: Object.keys(allTokens || {}).length,
       total: flatTokens.length,
       fromCache: Boolean(fromCache),
     });
   } catch (e) {
     if (String(e?.message || '').includes('401')) logout();
-    adminDebug('token:loadData:error', { message: e?.message || String(e) });
+    logAdminDebug('token:loadData:error', { message: e?.message || String(e) });
     showToast('加载失败: ' + e.message, 'error');
   }
 }
@@ -428,7 +428,7 @@ function renderTable() {
   const emptyState = document.getElementById('empty-state');
 
   if (!tbody || !loading || !emptyState) {
-    adminDebug('token:renderTable:missing-dom', {
+    logAdminDebug('token:renderTable:missing-dom', {
       hasBody: Boolean(tbody),
       hasLoading: Boolean(loading),
       hasEmpty: Boolean(emptyState),
@@ -1490,6 +1490,6 @@ function escapeHtml(text) {
 
 
 window.onload = () => {
-  adminDebug('token:onload');
+  logAdminDebug('token:onload');
   init();
 };

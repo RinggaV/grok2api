@@ -4,6 +4,11 @@ const APP_KEY_XOR_PREFIX = 'enc:xor:';
 const APP_KEY_SECRET = 'grok2api-admin-key';
 const ADMIN_API_KEY_STORAGE = 'grok2api_admin_api_key';
 let cachedApiKey = null;
+function logAdminDebug(...args) {
+  if (typeof window.adminDebug === 'function') {
+    window.adminDebug(...args);
+  }
+}
 function getAdminQuery() {
   if (typeof window.__adminQuery === 'string') return window.__adminQuery;
   return window.location.search || '';
@@ -85,13 +90,16 @@ async function fetchAdminJsonCached(cacheKey, url, init = {}) {
   const cachedEtag = localStorage.getItem(etagKey);
   if (cachedEtag) headers.set('If-None-Match', cachedEtag);
 
+  logAdminDebug('fetchAdminJsonCached:start', { cacheKey, url, hasEtag: Boolean(cachedEtag), adminQuery });
   const res = await fetch(url, { ...init, headers });
   if (res.status === 304) {
     const cached = localStorage.getItem(dataKey);
     if (cached) {
       try {
+        logAdminDebug('fetchAdminJsonCached:304-cache-hit', { cacheKey });
         return { data: JSON.parse(cached), fromCache: true };
       } catch (e) {
+        logAdminDebug('fetchAdminJsonCached:304-cache-parse-failed', { cacheKey });
         localStorage.removeItem(dataKey);
       }
     }
@@ -101,6 +109,7 @@ async function fetchAdminJsonCached(cacheKey, url, init = {}) {
     const retryEtag = retryRes.headers.get('ETag');
     if (retryEtag) localStorage.setItem(etagKey, retryEtag);
     localStorage.setItem(dataKey, JSON.stringify(retryData));
+    logAdminDebug('fetchAdminJsonCached:304-retry', { cacheKey, etag: retryEtag || '' });
     return { data: retryData, fromCache: false };
   }
 
@@ -109,6 +118,7 @@ async function fetchAdminJsonCached(cacheKey, url, init = {}) {
   const etag = res.headers.get('ETag');
   if (etag) localStorage.setItem(etagKey, etag);
   localStorage.setItem(dataKey, JSON.stringify(data));
+  logAdminDebug('fetchAdminJsonCached:200', { cacheKey, etag: etag || '' });
   return { data, fromCache: false };
 }
 
@@ -267,6 +277,7 @@ function clearStoredAppKey() {
 }
 
 async function requestApiKey(creds) {
+  logAdminDebug('requestApiKey:start');
   const body = serializeCreds(creds);
   const res = await fetch('/api/v1/admin/login', {
     method: 'POST',
@@ -279,6 +290,7 @@ async function requestApiKey(creds) {
   const data = await res.json();
   const rawApiKey = data.api_key || '';
   cachedApiKey = rawApiKey ? `Bearer ${rawApiKey}` : '';
+  logAdminDebug('requestApiKey:ok', { hasKey: Boolean(cachedApiKey) });
   if (cachedApiKey) sessionStorage.setItem(ADMIN_API_KEY_STORAGE, cachedApiKey);
   return cachedApiKey;
 }
@@ -287,8 +299,10 @@ async function ensureApiKey() {
   const cached = cachedApiKey || sessionStorage.getItem(ADMIN_API_KEY_STORAGE) || '';
   if (cached) {
     cachedApiKey = cached;
+    logAdminDebug('ensureApiKey:cache-hit');
     return cachedApiKey;
   }
+  logAdminDebug('ensureApiKey:cache-miss');
   const creds = await getStoredAppKey();
   if (!creds || !creds.password) {
     window.location.href = '/login';
