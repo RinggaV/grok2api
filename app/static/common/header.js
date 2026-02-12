@@ -228,13 +228,17 @@ async function loadAdminHeader() {
     const res = await fetch('/static/common/header.html?v=4', { cache: 'no-store' });
     if (!res.ok) return;
     container.innerHTML = await res.text();
-    updateActiveNav(container, window.location.pathname);
+    const normalizedPath = normalizeAdminPath(window.location.pathname);
+    if (normalizedPath !== window.location.pathname) {
+      window.history.replaceState({}, '', `${normalizedPath}${window.location.search || ''}`);
+    }
+    updateActiveNav(container, normalizedPath);
     setupMobileDrawer(container);
     if (typeof updateStorageModeButton === 'function') {
       updateStorageModeButton();
     }
     window.__adminQuery = window.location.search || '';
-    activePageKey = getPageKeyByPath(window.location.pathname);
+    activePageKey = getPageKeyByPath(normalizedPath);
     runPageInit(activePageKey);
     container.querySelectorAll('a[data-nav]').forEach((link) => {
       link.addEventListener('click', (event) => {
@@ -255,7 +259,7 @@ async function loadAdminHeader() {
 }
 
 window.addEventListener('popstate', () => {
-  const path = window.location.pathname;
+  const path = normalizeAdminPath(window.location.pathname);
   if (!path.startsWith('/admin/')) return;
   loadAdminPage(path, false);
 });
