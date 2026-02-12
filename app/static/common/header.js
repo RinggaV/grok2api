@@ -89,6 +89,11 @@ function ensureRegistry() {
   return window.__pageRegistry;
 }
 
+function getAdminQuery() {
+  const cached = typeof window.__adminQuery === 'string' ? window.__adminQuery : '';
+  return cached || window.location.search || '';
+}
+
 function getPageKeyByPath(pathname) {
   const path = String(pathname || '');
   if (path.startsWith('/admin/token')) return 'token';
@@ -180,6 +185,26 @@ function getPageContainer(doc) {
   return doc.querySelector('#app-page') || doc.querySelector('main');
 }
 
+function syncPageOverlays(doc, nextContainer) {
+  const overlayIds = ['batch-actions', 'confirm-dialog', 'failure-dialog'];
+  const keep = new Set(
+    overlayIds.filter((id) => doc.getElementById(id))
+  );
+  overlayIds.forEach((id) => {
+    const nodes = Array.from(document.querySelectorAll(`#${id}`));
+    if (!nodes.length) return;
+    if (!keep.has(id)) {
+      nodes.forEach((node) => node.remove());
+      return;
+    }
+    nodes.forEach((node, idx) => {
+      if (idx > 0 && (!nextContainer || !nextContainer.contains(node))) {
+        node.remove();
+      }
+    });
+  });
+}
+
 async function loadAdminPage(url, pushState) {
   if (navLoadInFlight) navLoadInFlight.abort();
   navLoadInFlight = new AbortController();
@@ -190,6 +215,7 @@ async function loadAdminPage(url, pushState) {
     const finalUrl = new URL(res.url || url, window.location.origin);
     const finalPath = finalUrl.pathname || window.location.pathname;
     const finalSearch = finalUrl.search || '';
+    const effectiveSearch = finalSearch || window.location.search || getAdminQuery();
     const doc = new DOMParser().parseFromString(html, 'text/html');
     const nextContainer = getPageContainer(doc);
     const currentContainer = document.querySelector('#app-page') || document.querySelector('main');
@@ -202,14 +228,15 @@ async function loadAdminPage(url, pushState) {
     document.title = doc.title || document.title;
     document.body.className = doc.body.className || document.body.className;
     currentContainer.replaceWith(nextContainer);
-    window.__adminQuery = finalSearch || window.location.search || '';
+    window.__adminQuery = effectiveSearch || '';
     const normalizedPath = normalizeAdminPath(finalPath);
-    const nextUrl = `${normalizedPath}${finalSearch}`;
+    const nextUrl = `${normalizedPath}${effectiveSearch}`;
     if (pushState) {
       window.history.pushState({}, '', nextUrl);
     } else if (normalizedPath !== window.location.pathname || finalSearch !== window.location.search) {
       window.history.replaceState({}, '', nextUrl);
     }
+    syncPageOverlays(doc, nextContainer);
     await ensurePageAssets(assets);
     const header = document.getElementById('app-header');
     if (header) updateActiveNav(header, normalizedPath);
@@ -237,7 +264,9 @@ async function loadAdminHeader() {
     if (typeof updateStorageModeButton === 'function') {
       updateStorageModeButton();
     }
-    window.__adminQuery = window.location.search || '';
+    if (window.location.search) {
+      window.__adminQuery = window.location.search;
+    }
     activePageKey = getPageKeyByPath(normalizedPath);
     runPageInit(activePageKey);
     container.querySelectorAll('a[data-nav]').forEach((link) => {
@@ -246,8 +275,9 @@ async function loadAdminHeader() {
         if (!href || href.startsWith('http')) return;
         event.preventDefault();
         const target = new URL(href, window.location.origin);
-        if (!target.search && window.location.search) {
-          target.search = window.location.search;
+        if (!target.search) {
+          const adminQuery = getAdminQuery();
+          if (adminQuery) target.search = adminQuery;
         }
         if (target.pathname === window.location.pathname && target.search === window.location.search) return;
         loadAdminPage(target.toString(), true);
