@@ -1,22 +1,22 @@
 ﻿var apiKey = '';
-let allTokens = {};
-let flatTokens = [];
-let isBatchProcessing = false;
-let isBatchPaused = false;
-let batchQueue = [];
-let batchTotal = 0;
-let batchProcessed = 0;
-let currentBatchAction = null;
-const BATCH_SIZE = 50;
-let autoRegisterJobId = null;
-let autoRegisterTimer = null;
-let autoRegisterLastAdded = 0;
-let liveStatsTimer = null;
-let isWorkersRuntime = false;
-let isNsfwRefreshAllRunning = false;
+var allTokens = {};
+var flatTokens = [];
+var isBatchProcessing = false;
+var isBatchPaused = false;
+var batchQueue = [];
+var batchTotal = 0;
+var batchProcessed = 0;
+var currentBatchAction = null;
+var BATCH_SIZE = 50;
+var autoRegisterJobId = null;
+var autoRegisterTimer = null;
+var autoRegisterLastAdded = 0;
+var liveStatsTimer = null;
+var isWorkersRuntime = false;
+var isNsfwRefreshAllRunning = false;
 
-let displayTokens = [];
-const filterState = {
+var displayTokens = [];
+var filterState = {
   typeSso: false,
   typeSuperSso: false,
   statusActive: false,
