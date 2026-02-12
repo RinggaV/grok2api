@@ -1489,7 +1489,4 @@ function escapeHtml(text) {
 
 
 
-window.onload = () => {
-  logAdminDebug('token:onload');
-  init();
-};
+// init is triggered by header.js runPageInit for admin pages.
