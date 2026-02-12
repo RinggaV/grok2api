@@ -71,13 +71,15 @@ function fetchWithAdminTimeout(input, init) {
     .finally(() => clearTimeout(timeout));
 }
 
-function getAdminCacheKey(key, suffix) {
-  return `${ADMIN_CACHE_PREFIX}${key}:${suffix}`;
+function getAdminCacheKey(key, suffix, query) {
+  const q = query || '';
+  return `${ADMIN_CACHE_PREFIX}${key}:${suffix}:${q}`;
 }
 
 async function fetchAdminJsonCached(cacheKey, url, init = {}) {
-  const dataKey = getAdminCacheKey(cacheKey, 'data');
-  const etagKey = getAdminCacheKey(cacheKey, 'etag');
+  const adminQuery = getAdminQuery();
+  const dataKey = getAdminCacheKey(cacheKey, 'data', adminQuery);
+  const etagKey = getAdminCacheKey(cacheKey, 'etag', adminQuery);
   const headers = new Headers(init.headers || {});
   const cachedEtag = localStorage.getItem(etagKey);
   if (cachedEtag) headers.set('If-None-Match', cachedEtag);
@@ -86,7 +88,11 @@ async function fetchAdminJsonCached(cacheKey, url, init = {}) {
   if (res.status === 304) {
     const cached = localStorage.getItem(dataKey);
     if (cached) {
-      return { data: JSON.parse(cached), fromCache: true };
+      try {
+        return { data: JSON.parse(cached), fromCache: true };
+      } catch (e) {
+        localStorage.removeItem(dataKey);
+      }
     }
     const retryRes = await fetch(url, init);
     if (!retryRes.ok) throw new Error(`HTTP ${retryRes.status}`);

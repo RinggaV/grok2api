@@ -229,10 +229,12 @@ async function loadAdminPage(url, pushState) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const html = await res.text();
     const previousQuery = getAdminQuery();
+    const buildSha = res.headers.get('x-grok2api-build') || '';
     const finalUrl = new URL(res.url || url, window.location.origin);
     const finalPath = finalUrl.pathname || window.location.pathname;
     const finalSearch = finalUrl.search || '';
-    const effectiveSearch = finalSearch || window.location.search || previousQuery;
+    const buildQuery = buildSha ? `?v=${encodeURIComponent(buildSha)}` : '';
+    const effectiveSearch = finalSearch || window.location.search || buildQuery || previousQuery;
     const doc = new DOMParser().parseFromString(html, 'text/html');
     const nextContainer = getPageContainer(doc);
     const currentContainer = document.querySelector('#app-page') || document.querySelector('main');
