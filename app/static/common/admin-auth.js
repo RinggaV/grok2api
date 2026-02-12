@@ -2,6 +2,7 @@ const APP_KEY_STORAGE = 'grok2api_app_key';
 const APP_KEY_ENC_PREFIX = 'enc:v1:';
 const APP_KEY_XOR_PREFIX = 'enc:xor:';
 const APP_KEY_SECRET = 'grok2api-admin-key';
+const ADMIN_API_KEY_STORAGE = 'grok2api_admin_api_key';
 let cachedApiKey = null;
 function getAdminQuery() {
   if (typeof window.__adminQuery === 'string') return window.__adminQuery;
@@ -261,6 +262,7 @@ async function storeAppKey(input) {
 
 function clearStoredAppKey() {
   localStorage.removeItem(APP_KEY_STORAGE);
+  sessionStorage.removeItem(ADMIN_API_KEY_STORAGE);
   cachedApiKey = null;
 }
 
@@ -277,10 +279,16 @@ async function requestApiKey(creds) {
   const data = await res.json();
   const rawApiKey = data.api_key || '';
   cachedApiKey = rawApiKey ? `Bearer ${rawApiKey}` : '';
+  if (cachedApiKey) sessionStorage.setItem(ADMIN_API_KEY_STORAGE, cachedApiKey);
   return cachedApiKey;
 }
 
 async function ensureApiKey() {
+  const cached = cachedApiKey || sessionStorage.getItem(ADMIN_API_KEY_STORAGE) || '';
+  if (cached) {
+    cachedApiKey = cached;
+    return cachedApiKey;
+  }
   const creds = await getStoredAppKey();
   if (!creds || !creds.password) {
     window.location.href = '/login';

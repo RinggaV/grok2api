@@ -234,10 +234,10 @@ var deleteProcessed = 0;
 var BATCH_SIZE = 10;
 
 async function loadStats(options = {}) {
+  const silent = options.silent === true;
   try {
     ensureUI();
     const merge = options.merge === true;
-    const silent = options.silent === true;
     const params = new URLSearchParams();
     if (options.tokens && options.tokens.length) {
       params.set('tokens', options.tokens.join(','));
@@ -268,18 +268,20 @@ async function loadStats(options = {}) {
 
     const statusEl = ui.onlineStatus;
     const lastClearEl = ui.onlineLastClear;
-    if (data.online.status === 'ok') {
-      statusEl.textContent = '连接正常';
-      statusEl.className = 'text-xs text-green-600 mt-1';
-    } else if (data.online.status === 'no_token') {
-      statusEl.textContent = '无可用 Token';
-      statusEl.className = 'text-xs text-orange-500 mt-1';
-    } else if (data.online.status === 'not_loaded') {
-      statusEl.textContent = '未加载';
-      statusEl.className = 'text-xs text-[var(--accents-4)] mt-1';
-    } else {
-      statusEl.textContent = '无法连接';
-      statusEl.className = 'text-xs text-red-500 mt-1';
+    if (statusEl) {
+      if (data.online.status === 'ok') {
+        statusEl.textContent = '连接正常';
+        statusEl.className = 'text-xs text-green-600 mt-1';
+      } else if (data.online.status === 'no_token') {
+        statusEl.textContent = '无可用 Token';
+        statusEl.className = 'text-xs text-orange-500 mt-1';
+      } else if (data.online.status === 'not_loaded') {
+        statusEl.textContent = '未加载';
+        statusEl.className = 'text-xs text-[var(--accents-4)] mt-1';
+      } else {
+        statusEl.textContent = '无法连接';
+        statusEl.className = 'text-xs text-red-500 mt-1';
+      }
     }
 
     // Update master accounts list
