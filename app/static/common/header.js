@@ -212,10 +212,11 @@ async function loadAdminPage(url, pushState) {
     const res = await fetch(url, { cache: 'no-store', signal: navLoadInFlight.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const html = await res.text();
+    const previousQuery = getAdminQuery();
     const finalUrl = new URL(res.url || url, window.location.origin);
     const finalPath = finalUrl.pathname || window.location.pathname;
     const finalSearch = finalUrl.search || '';
-    const effectiveSearch = finalSearch || window.location.search || getAdminQuery();
+    const effectiveSearch = finalSearch || window.location.search || previousQuery;
     const doc = new DOMParser().parseFromString(html, 'text/html');
     const nextContainer = getPageContainer(doc);
     const currentContainer = document.querySelector('#app-page') || document.querySelector('main');
@@ -228,9 +229,9 @@ async function loadAdminPage(url, pushState) {
     document.title = doc.title || document.title;
     document.body.className = doc.body.className || document.body.className;
     currentContainer.replaceWith(nextContainer);
-    window.__adminQuery = effectiveSearch || '';
+    window.__adminQuery = effectiveSearch || previousQuery || '';
     const normalizedPath = normalizeAdminPath(finalPath);
-    const nextUrl = `${normalizedPath}${effectiveSearch}`;
+    const nextUrl = `${normalizedPath}${effectiveSearch || previousQuery || ''}`;
     if (pushState) {
       window.history.pushState({}, '', nextUrl);
     } else if (normalizedPath !== window.location.pathname || finalSearch !== window.location.search) {
