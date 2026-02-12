@@ -132,7 +132,15 @@ function escapeHtml(str) {
 }
 
 function ensureUI() {
-  if (!ui.batchActions) cacheUI();
+  const needsRefresh = !ui.batchActions
+    || !ui.batchActions.isConnected
+    || !ui.accountTableBody
+    || !ui.accountTableBody.isConnected
+    || !ui.localImageBody
+    || !ui.localImageBody.isConnected
+    || !ui.localVideoBody
+    || !ui.localVideoBody.isConnected;
+  if (needsRefresh) cacheUI();
 }
 
 var confirmResolver = null;
