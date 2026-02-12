@@ -389,10 +389,10 @@ async function loadKeys() {
   setLoading(true);
   setEmptyState(false);
   try {
-    const res = await fetch('/api/v1/admin/keys', { headers: buildAuthHeaders(apiKey) });
-    if (res.status === 401) return logout();
-    const payload = await parseJsonSafely(res);
-    if (!res.ok || payload?.success !== true) {
+    const { data: payload } = await fetchAdminJsonCached('keys', '/api/v1/admin/keys', {
+      headers: buildAuthHeaders(apiKey)
+    });
+    if (payload?.success !== true) {
       throw new Error(extractErrorMessage(payload, '加载失败'));
     }
     const rows = Array.isArray(payload.data) ? payload.data : [];
@@ -401,6 +401,7 @@ async function loadKeys() {
     applyKeyFilters();
     renderTable();
   } catch (e) {
+    if (String(e?.message || '').includes('401')) return logout();
     showToast(`加载失败: ${e?.message || e}`, 'error');
   } finally {
     setLoading(false);

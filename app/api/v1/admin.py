@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, Body, WebSocket
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
 from pydantic import BaseModel
 from typing import Any, Optional
 
@@ -11,6 +11,7 @@ from pathlib import Path
 import aiofiles
 import asyncio
 import json
+import hashlib
 import time
 import uuid
 import orjson
@@ -35,6 +36,18 @@ from app.core.auth import _load_legacy_api_keys
 router = APIRouter()
 
 TEMPLATE_DIR = Path(__file__).parent.parent.parent / "static"
+
+
+def _etag_from_payload(payload: Any) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _json_with_etag(payload: Any, request: Request) -> Response:
+    etag = _etag_from_payload(payload)
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    return JSONResponse(payload, headers={"ETag": etag})
 
 
 class AdminLoginBody(BaseModel):
@@ -351,10 +364,10 @@ async def admin_login_api(request: Request, body: AdminLoginBody | None = Body(d
     return {"status": "success", "api_key": get_config("app.api_key", "")}
 
 @router.get("/api/v1/admin/config", dependencies=[Depends(verify_api_key)])
-async def get_config_api():
+async def get_config_api(request: Request):
     """获取当前配置"""
     # 暴露原始配置字典
-    return config._config
+    return _json_with_etag(config._config, request)
 
 @router.post("/api/v1/admin/config", dependencies=[Depends(verify_api_key)])
 async def update_config_api(data: dict):
@@ -529,7 +542,7 @@ def _trigger_account_settings_refresh_background(
 
 
 @router.get("/api/v1/admin/keys", dependencies=[Depends(verify_api_key)])
-async def list_api_keys():
+async def list_api_keys(request: Request):
     """List API keys + daily usage/remaining (for admin UI)."""
     await api_key_manager.init()
     day, usage_map = await api_key_manager.usage_today()
@@ -570,7 +583,7 @@ async def list_api_keys():
         })
 
     # New UI expects { success: true, data: [...] }
-    return {"success": True, "data": out}
+    return _json_with_etag({"success": True, "data": out}, request)
 
 
 @router.post("/api/v1/admin/keys", dependencies=[Depends(verify_api_key)])
@@ -675,7 +688,7 @@ async def get_storage_info():
     return {"type": storage_type or "local"}
 
 @router.get("/api/v1/admin/tokens", dependencies=[Depends(verify_api_key)])
-async def get_tokens_api():
+async def get_tokens_api(request: Request):
     """获取所有 Token"""
     storage = get_storage()
     tokens = await storage.load_tokens()
@@ -689,7 +702,7 @@ async def get_tokens_api():
             if obj:
                 normalized.append(obj)
         out[str(pool_name)] = normalized
-    return out
+    return _json_with_etag(out, request)
 
 @router.post("/api/v1/admin/tokens", dependencies=[Depends(verify_api_key)])
 async def update_tokens_api(data: dict):
@@ -992,7 +1005,7 @@ async def get_cache_stats_api(request: Request):
             else:
                 online_stats = {"count": 0, "status": "not_loaded", "token": None, "last_asset_clear_at": None}
             
-        return {
+        payload = {
             "local_image": image_stats,
             "local_video": video_stats,
             "online": online_stats,
@@ -1000,6 +1013,7 @@ async def get_cache_stats_api(request: Request):
             "online_scope": scope or "none",
             "online_details": online_details
         }
+        return _json_with_etag(payload, request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1018,6 +1032,7 @@ async def clear_local_cache_api(data: dict):
 
 @router.get("/api/v1/admin/cache/list", dependencies=[Depends(verify_api_key)])
 async def list_local_cache_api(
+    request: Request,
     cache_type: str = "image",
     type_: str = Query(default=None, alias="type"),
     page: int = 1,
@@ -1030,7 +1045,8 @@ async def list_local_cache_api(
             cache_type = type_
         dl_service = DownloadService()
         result = dl_service.list_files(cache_type, page, page_size)
-        return {"status": "success", **result}
+        payload = {"status": "success", **result}
+        return _json_with_etag(payload, request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1105,7 +1121,7 @@ async def clear_online_cache_api(data: dict):
 
 
 @router.get("/api/v1/admin/metrics", dependencies=[Depends(verify_api_key)])
-async def get_metrics_api():
+async def get_metrics_api(request: Request):
     """数据中心：聚合常用指标（token/cache/request_stats）。"""
     try:
         from app.services.request_stats import request_stats
@@ -1145,7 +1161,7 @@ async def get_metrics_api():
         await request_stats.init()
         stats = request_stats.get_stats(hours=24, days=7)
 
-        return {
+        payload = {
             "tokens": {
                 "total": total,
                 "active": active,
@@ -1162,12 +1178,13 @@ async def get_metrics_api():
             },
             "request_stats": stats,
         }
+        return _json_with_etag(payload, request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/api/v1/admin/cache/local", dependencies=[Depends(verify_api_key)])
-async def get_cache_local_stats_api():
+async def get_cache_local_stats_api(request: Request):
     """仅获取本地缓存统计（用于前端实时刷新）。"""
     from app.services.grok.assets import DownloadService
 
@@ -1175,7 +1192,8 @@ async def get_cache_local_stats_api():
         dl_service = DownloadService()
         image_stats = dl_service.get_stats("image")
         video_stats = dl_service.get_stats("video")
-        return {"local_image": image_stats, "local_video": video_stats}
+        payload = {"local_image": image_stats, "local_video": video_stats}
+        return _json_with_etag(payload, request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

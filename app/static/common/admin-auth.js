@@ -25,6 +25,7 @@ function withAdminQuery(url) {
 }
 
 const ADMIN_FETCH_TIMEOUT_MS = 5000;
+const ADMIN_CACHE_PREFIX = 'grok2api_admin_cache:';
 const _fetch = window.fetch.bind(window);
 window.fetch = (input, init) => {
   const adminQuery = getAdminQuery();
@@ -69,6 +70,42 @@ function fetchWithAdminTimeout(input, init) {
     })
     .finally(() => clearTimeout(timeout));
 }
+
+function getAdminCacheKey(key, suffix) {
+  return `${ADMIN_CACHE_PREFIX}${key}:${suffix}`;
+}
+
+async function fetchAdminJsonCached(cacheKey, url, init = {}) {
+  const dataKey = getAdminCacheKey(cacheKey, 'data');
+  const etagKey = getAdminCacheKey(cacheKey, 'etag');
+  const headers = new Headers(init.headers || {});
+  const cachedEtag = localStorage.getItem(etagKey);
+  if (cachedEtag) headers.set('If-None-Match', cachedEtag);
+
+  const res = await fetch(url, { ...init, headers });
+  if (res.status === 304) {
+    const cached = localStorage.getItem(dataKey);
+    if (cached) {
+      return { data: JSON.parse(cached), fromCache: true };
+    }
+    const retryRes = await fetch(url, init);
+    if (!retryRes.ok) throw new Error(`HTTP ${retryRes.status}`);
+    const retryData = await retryRes.json();
+    const retryEtag = retryRes.headers.get('ETag');
+    if (retryEtag) localStorage.setItem(etagKey, retryEtag);
+    localStorage.setItem(dataKey, JSON.stringify(retryData));
+    return { data: retryData, fromCache: false };
+  }
+
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  const etag = res.headers.get('ETag');
+  if (etag) localStorage.setItem(etagKey, etag);
+  localStorage.setItem(dataKey, JSON.stringify(data));
+  return { data, fromCache: false };
+}
+
+window.fetchAdminJsonCached = fetchAdminJsonCached;
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();

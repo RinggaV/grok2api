@@ -109,16 +109,13 @@ async function init() {
 
 async function loadData() {
   try {
-    const res = await fetch('/api/v1/admin/config', {
+    const { data } = await fetchAdminJsonCached('config', '/api/v1/admin/config', {
       headers: buildAuthHeaders(apiKey)
     });
-    if (res.ok) {
-      currentConfig = await res.json();
-      renderConfig(currentConfig);
-    } else if (res.status === 401) {
-      logout();
-    }
+    currentConfig = data || {};
+    renderConfig(currentConfig);
   } catch (e) {
+    if (String(e?.message || '').includes('401')) logout();
     showToast('连接失败', 'error');
   }
 }

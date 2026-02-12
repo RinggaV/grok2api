@@ -252,15 +252,10 @@ async function loadStats(options = {}) {
       currentScope = 'none';
     }
     const url = `/api/v1/admin/cache${params.toString() ? `?${params.toString()}` : ''}`;
-    const res = await fetch(url, {
+    const cacheKey = `cache:stats:${currentScope}`;
+    const { data } = await fetchAdminJsonCached(cacheKey, url, {
       headers: buildAuthHeaders(apiKey)
     });
-
-    if (res.status === 401) {
-      logout();
-      return;
-    }
-    const data = await res.json();
     if (!merge) {
       accountStates.clear();
     }
@@ -327,6 +322,10 @@ async function loadStats(options = {}) {
     renderAccountTable(data);
     return data;
   } catch (e) {
+    if (String(e?.message || '').includes('401')) {
+      logout();
+      return null;
+    }
     if (!silent) showToast('加载统计失败', 'error');
     return null;
   }
@@ -773,14 +772,11 @@ async function loadLocalCacheList(type) {
   body.innerHTML = `<tr><td colspan="5">加载中...</td></tr>`;
   try {
     const params = new URLSearchParams({ type, page: '1', page_size: '1000' });
-    const res = await fetch(`/api/v1/admin/cache/list?${params.toString()}`, {
+    const url = `/api/v1/admin/cache/list?${params.toString()}`;
+    const cacheKey = `cache:list:${type}`;
+    const { data } = await fetchAdminJsonCached(cacheKey, url, {
       headers: buildAuthHeaders(apiKey)
     });
-    if (!res.ok) {
-      body.innerHTML = `<tr><td colspan="5">加载失败</td></tr>`;
-      return;
-    }
-    const data = await res.json();
     const items = Array.isArray(data.items) ? data.items : [];
     cacheListState[type].items = items;
     cacheListState[type].loaded = true;
@@ -791,6 +787,10 @@ async function loadLocalCacheList(type) {
     });
     renderLocalCacheList(type, items);
   } catch (e) {
+    if (String(e?.message || '').includes('401')) {
+      logout();
+      return;
+    }
     body.innerHTML = `<tr><td colspan="5">加载失败</td></tr>`;
   }
 }

@@ -327,23 +327,16 @@ async function refreshStatsOnly() {
 
 async function loadData() {
   try {
-    const res = await fetch('/api/v1/admin/tokens', {
+    const { data } = await fetchAdminJsonCached('tokens', '/api/v1/admin/tokens', {
       headers: buildAuthHeaders(apiKey)
     });
-    if (res.ok) {
-      const data = await parseJsonSafely(res);
-      allTokens = data;
-      processTokens(data);
-      updateStats(data);
-      applyFilters();
-      renderTable();
-    } else if (res.status === 401) {
-      logout();
-    } else {
-      const payload = await parseJsonSafely(res);
-      throw new Error(extractApiErrorMessage(payload, `HTTP ${res.status}`));
-    }
+    allTokens = data || {};
+    processTokens(allTokens);
+    updateStats(allTokens);
+    applyFilters();
+    renderTable();
   } catch (e) {
+    if (String(e?.message || '').includes('401')) logout();
     showToast('加载失败: ' + e.message, 'error');
   }
 }

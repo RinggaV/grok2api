@@ -3,6 +3,7 @@ let navLoadInFlight = null;
 let activePageKey = null;
 const scriptLoaders = new Map();
 window.__pageRegistry = window.__pageRegistry || {};
+const ADMIN_QUERY_STORAGE_KEY = 'grok2api_admin_query';
 
 function setupMobileDrawer(container) {
   const toggleBtn = container.querySelector('#mobile-nav-toggle');
@@ -89,9 +90,24 @@ function ensureRegistry() {
   return window.__pageRegistry;
 }
 
+function getStoredAdminQuery() {
+  try {
+    return localStorage.getItem(ADMIN_QUERY_STORAGE_KEY) || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function setStoredAdminQuery(query) {
+  if (!query) return;
+  try {
+    localStorage.setItem(ADMIN_QUERY_STORAGE_KEY, query);
+  } catch (e) {}
+}
+
 function getAdminQuery() {
   const cached = typeof window.__adminQuery === 'string' ? window.__adminQuery : '';
-  return cached || window.location.search || '';
+  return cached || window.location.search || getStoredAdminQuery() || '';
 }
 
 function getPageKeyByPath(pathname) {
@@ -230,6 +246,7 @@ async function loadAdminPage(url, pushState) {
     document.body.className = doc.body.className || document.body.className;
     currentContainer.replaceWith(nextContainer);
     window.__adminQuery = effectiveSearch || previousQuery || '';
+    setStoredAdminQuery(window.__adminQuery);
     const normalizedPath = normalizeAdminPath(finalPath);
     const nextUrl = `${normalizedPath}${effectiveSearch || previousQuery || ''}`;
     if (pushState) {
@@ -267,6 +284,7 @@ async function loadAdminHeader() {
     }
     if (window.location.search) {
       window.__adminQuery = window.location.search;
+      setStoredAdminQuery(window.__adminQuery);
     }
     activePageKey = getPageKeyByPath(normalizedPath);
     runPageInit(activePageKey);

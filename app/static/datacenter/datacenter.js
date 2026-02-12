@@ -83,13 +83,10 @@ function buildCharts() {
 }
 
 async function fetchMetrics() {
-  const res = await fetch('/api/v1/admin/metrics', { headers: buildAuthHeaders(apiKey) });
-  if (res.status === 401) {
-    logout();
-    return null;
-  }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return await res.json();
+  const { data } = await fetchAdminJsonCached('metrics', '/api/v1/admin/metrics', {
+    headers: buildAuthHeaders(apiKey)
+  });
+  return data;
 }
 
 function updateMetricsUI(data) {
@@ -145,6 +142,10 @@ async function refreshMetricsOnce(silent = false) {
     if (!data) return;
     updateMetricsUI(data);
   } catch (e) {
+    if (String(e?.message || '').includes('401')) {
+      logout();
+      return;
+    }
     if (!silent) showToast(`刷新失败: ${e.message || e}`, 'error');
   }
 }
