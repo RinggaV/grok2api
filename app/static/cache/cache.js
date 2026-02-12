@@ -220,7 +220,7 @@ function calcPercent(processed, total) {
   return total ? Math.floor((processed / total) * 100) : 0;
 }
 
-const accountStates = new Map();
+var accountStates = new Map();
 var isBatchLoading = false;
 var isLoadPaused = false;
 var batchQueue = [];
@@ -231,7 +231,7 @@ var isBatchDeleting = false;
 var isDeletePaused = false;
 var deleteTotal = 0;
 var deleteProcessed = 0;
-const BATCH_SIZE = 10;
+var BATCH_SIZE = 10;
 
 async function loadStats(options = {}) {
   try {
