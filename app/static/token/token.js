@@ -242,6 +242,11 @@ if (document.readyState === 'loading') {
 
 async function init() {
   logAdminDebug('token:init:start');
+  const guardEl = document.getElementById('token-table-body');
+  if (!guardEl) {
+    logAdminDebug('token:init:skip-no-dom');
+    return;
+  }
   apiKey = await ensureApiKey();
   if (apiKey === null) {
     logAdminDebug('token:init:no-key');
