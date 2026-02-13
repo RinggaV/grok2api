@@ -141,6 +141,35 @@ function toUpstreamHeaders(args: { pathname: string; cookie: string; settings: A
   return headers;
 }
 
+function buildClientHeadersFromUpstream(args: {
+  upstream: Response;
+  contentType: string;
+  cacheSeconds: number;
+  contentLength?: number;
+}): Headers {
+  const headers = new Headers();
+  const source = args.upstream.headers;
+  const allowList = [
+    "content-range",
+    "accept-ranges",
+    "etag",
+    "last-modified",
+    "expires",
+    "vary",
+  ];
+  for (const key of allowList) {
+    const value = source.get(key);
+    if (value) headers.set(key, value);
+  }
+  headers.set("Access-Control-Allow-Origin", "*");
+  headers.set("Cache-Control", `public, max-age=${args.cacheSeconds}`);
+  if (args.contentType) headers.set("Content-Type", args.contentType);
+  if (Number.isFinite(Number(args.contentLength)) && Number(args.contentLength) >= 0) {
+    headers.set("Content-Length", String(Math.floor(Number(args.contentLength))));
+  }
+  return headers;
+}
+
 mediaRoutes.get("/images/:imgPath{.+}", async (c) => {
   const imgPath = c.req.param("imgPath");
 
@@ -241,6 +270,20 @@ mediaRoutes.get("/images/:imgPath{.+}", async (c) => {
     !rangeHeader &&
     (!Number.isFinite(contentLength) || (contentLength > 0 && contentLength <= maxBytes));
 
+  // For range requests we avoid directly piping upstream stream (can be unstable on some H3/QUIC paths).
+  // Instead, buffer the partial payload and return an explicit Content-Length response.
+  if (rangeHeader) {
+    const partial = await upstream.arrayBuffer();
+    const outHeaders = buildClientHeadersFromUpstream({
+      upstream,
+      contentType,
+      cacheSeconds,
+      contentLength: partial.byteLength,
+    });
+    if (!outHeaders.get("Accept-Ranges")) outHeaders.set("Accept-Ranges", "bytes");
+    return new Response(partial, { status: upstream.status, headers: outHeaders });
+  }
+
   if (shouldTryCache) {
     const [toKvRaw, toClient] = upstream.body.tee();
     const tzOffset = parseIntSafe(c.env.CACHE_RESET_TZ_OFFSET_MINUTES, 480);
@@ -283,16 +326,20 @@ mediaRoutes.get("/images/:imgPath{.+}", async (c) => {
       })(),
     );
 
-    const outHeaders = new Headers(upstream.headers);
-    outHeaders.set("Access-Control-Allow-Origin", "*");
-    outHeaders.set("Cache-Control", `public, max-age=${cacheSeconds}`);
-    if (contentType) outHeaders.set("Content-Type", contentType);
+    const outHeaders = buildClientHeadersFromUpstream({
+      upstream,
+      contentType,
+      cacheSeconds,
+      contentLength: Number.isFinite(contentLength) ? contentLength : undefined,
+    });
     return new Response(toClient, { status: upstream.status, headers: outHeaders });
   }
 
-  const outHeaders = new Headers(upstream.headers);
-  outHeaders.set("Access-Control-Allow-Origin", "*");
-  outHeaders.set("Cache-Control", `public, max-age=${cacheSeconds}`);
-  if (contentType) outHeaders.set("Content-Type", contentType);
+  const outHeaders = buildClientHeadersFromUpstream({
+    upstream,
+    contentType,
+    cacheSeconds,
+    contentLength: Number.isFinite(contentLength) ? contentLength : undefined,
+  });
   return new Response(upstream.body, { status: upstream.status, headers: outHeaders });
 });
