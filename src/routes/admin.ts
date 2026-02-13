@@ -582,6 +582,33 @@ interface NsfwRefreshJobOptions {
   enable_nsfw: boolean;
   retries: number;
   request_timeout_ms: number;
+  concurrency: number;
+}
+
+function maskTokenForLog(token: string): string {
+  const t = normalizeSsoToken(token);
+  if (!t) return "";
+  if (t.length <= 8) return t;
+  return `${t.slice(0, 4)}...${t.slice(-4)}`;
+}
+
+async function addNsfwJobLog(
+  c: any,
+  args: { jobId: string; event: string; message: string; status?: number; token?: string },
+): Promise<void> {
+  try {
+    await addRequestLog(c.env.DB, {
+      ip: "admin",
+      model: `admin.nsfw.${args.event}`,
+      duration: 0,
+      status: Number(args.status ?? 200),
+      key_name: `job:${args.jobId}`,
+      token_suffix: args.token ? maskTokenForLog(args.token) : "",
+      error: String(args.message || "").slice(0, 512),
+    });
+  } catch {
+    // best effort log; never break main workflow
+  }
 }
 
 async function runNsfwRefreshJob(c: any, jobId: string, tokens: string[], options: NsfwRefreshJobOptions): Promise<void> {
@@ -592,6 +619,12 @@ async function runNsfwRefreshJob(c: any, jobId: string, tokens: string[], option
   const failedItems: Array<Record<string, unknown>> = [];
 
   if (!total) {
+    await addNsfwJobLog(c, {
+      jobId,
+      event: "completed",
+      message: "empty token list",
+      status: 200,
+    });
     await updateAdminJob(c.env.DB, jobId, {
       status: "completed",
       current_step: "completed",
@@ -605,46 +638,35 @@ async function runNsfwRefreshJob(c: any, jobId: string, tokens: string[], option
     total,
     current_step: options.enable_nsfw ? "set_birth_and_nsfw" : "set_birth_only",
   });
+  await addNsfwJobLog(c, {
+    jobId,
+    event: "start",
+    message: `start total=${total} enable_nsfw=${options.enable_nsfw} retries=${options.retries} timeout_ms=${options.request_timeout_ms} concurrency=${options.concurrency}`,
+    status: 200,
+  });
 
   try {
     const settings = await getSettings(c.env);
     const cf = normalizeCfCookie(settings.grok.cf_clearance ?? "");
     const attempts = Math.max(1, options.retries + 1);
+    const concurrency = Math.max(1, Math.min(options.concurrency, total));
+    let cancelRequested = false;
 
-    for (let i = 0; i < unique.length; i++) {
-      const token = unique[i]!;
+    await mapLimit(unique, concurrency, async (token) => {
+      if (cancelRequested) return;
       if (await isCancelRequested(c, jobId)) {
-        await markJobCancelled(c, jobId, summary, {
-          summary,
-          results,
-          failed: failedItems,
-          enable_nsfw: options.enable_nsfw,
-        });
+        cancelRequested = true;
         return;
       }
-
       let ok = false;
       let lastStep = "unknown";
       let lastError = "";
       for (let attempt = 1; attempt <= attempts; attempt++) {
+        if (cancelRequested) return;
         if (await isCancelRequested(c, jobId)) {
-          await markJobCancelled(c, jobId, summary, {
-            summary,
-            results,
-            failed: failedItems,
-            enable_nsfw: options.enable_nsfw,
-          });
+          cancelRequested = true;
           return;
         }
-        await updateAdminJob(c.env.DB, jobId, {
-          status: "running",
-          total,
-          processed: summary.processed,
-          success: summary.success,
-          failed: summary.failed,
-          invalidated: 0,
-          current_step: `birth ${i + 1}/${total} #${attempt}/${attempts}`,
-        });
         const birth = await setBirthDateForToken(token, cf, options.request_timeout_ms);
         if (!birth.ok) {
           lastStep = "birth";
@@ -655,24 +677,11 @@ async function runNsfwRefreshJob(c: any, jobId: string, tokens: string[], option
           ok = true;
           break;
         }
+        if (cancelRequested) return;
         if (await isCancelRequested(c, jobId)) {
-          await markJobCancelled(c, jobId, summary, {
-            summary,
-            results,
-            failed: failedItems,
-            enable_nsfw: options.enable_nsfw,
-          });
+          cancelRequested = true;
           return;
         }
-        await updateAdminJob(c.env.DB, jobId, {
-          status: "running",
-          total,
-          processed: summary.processed,
-          success: summary.success,
-          failed: summary.failed,
-          invalidated: 0,
-          current_step: `nsfw ${i + 1}/${total} #${attempt}/${attempts}`,
-        });
         const nsfw = await setNsfwForToken(token, cf, options.request_timeout_ms);
         if (nsfw.ok) {
           ok = true;
@@ -695,6 +704,13 @@ async function runNsfwRefreshJob(c: any, jobId: string, tokens: string[], option
           attempts,
           invalidated: false,
         });
+        await addNsfwJobLog(c, {
+          jobId,
+          event: "token_failed",
+          message: `token=${maskTokenForLog(token)} step=${lastStep} attempts=${attempts} error=${lastError || "unknown"}`,
+          status: 500,
+          token,
+        });
       }
       await updateAdminJob(c.env.DB, jobId, {
         status: "running",
@@ -703,8 +719,32 @@ async function runNsfwRefreshJob(c: any, jobId: string, tokens: string[], option
         success: summary.success,
         failed: summary.failed,
         invalidated: 0,
-        current_step: options.enable_nsfw ? "set_birth_and_nsfw" : "set_birth_only",
+        current_step: `processed ${summary.processed}/${total} (ok ${summary.success}, fail ${summary.failed})`,
       });
+      if (summary.processed % 10 === 0 || summary.processed === total) {
+        await addNsfwJobLog(c, {
+          jobId,
+          event: "progress",
+          message: `processed=${summary.processed}/${total} success=${summary.success} failed=${summary.failed}`,
+          status: 200,
+        });
+      }
+    });
+
+    if (cancelRequested || (await isCancelRequested(c, jobId))) {
+      await addNsfwJobLog(c, {
+        jobId,
+        event: "cancelled",
+        message: `cancelled processed=${summary.processed}/${total} success=${summary.success} failed=${summary.failed}`,
+        status: 499,
+      });
+      await markJobCancelled(c, jobId, summary, {
+        summary,
+        results,
+        failed: failedItems,
+        enable_nsfw: options.enable_nsfw,
+      });
+      return;
     }
 
     await updateAdminJob(c.env.DB, jobId, {
@@ -722,7 +762,20 @@ async function runNsfwRefreshJob(c: any, jobId: string, tokens: string[], option
         enable_nsfw: options.enable_nsfw,
       },
     });
+    await addNsfwJobLog(c, {
+      jobId,
+      event: "completed",
+      message: `completed processed=${summary.processed}/${total} success=${summary.success} failed=${summary.failed}`,
+      status: 200,
+    });
   } catch (e) {
+    const errMsg = e instanceof Error ? e.message : String(e);
+    await addNsfwJobLog(c, {
+      jobId,
+      event: "failed",
+      message: errMsg,
+      status: 500,
+    });
     await updateAdminJob(c.env.DB, jobId, {
       status: "failed",
       total,
@@ -731,7 +784,7 @@ async function runNsfwRefreshJob(c: any, jobId: string, tokens: string[], option
       failed: summary.failed,
       invalidated: 0,
       current_step: "failed",
-      last_error: e instanceof Error ? e.message : String(e),
+      last_error: errMsg,
       result: {
         summary,
         results,
@@ -1501,6 +1554,7 @@ adminRoutes.post("/api/v1/admin/tokens/nsfw/refresh/start", requireAdminAuth, as
     if (!unique.length) return c.json(legacyErr("No tokens provided"), 400);
     const enableNsfw = parseOptionalBoolean(body?.enable_nsfw, true);
     const retries = parsePositiveInt(body?.retries, NSFW_DEFAULT_RETRIES, 0, 10);
+    const concurrency = parsePositiveInt(body?.concurrency, NSFW_DEFAULT_CONCURRENCY, 1, 50);
     const requestTimeoutSec = parsePositiveInt(
       body?.request_timeout_sec,
       Math.floor(NSFW_REQUEST_TIMEOUT_MS / 1000),
@@ -1527,6 +1581,7 @@ adminRoutes.post("/api/v1/admin/tokens/nsfw/refresh/start", requireAdminAuth, as
         token_count: unique.length,
         enable_nsfw: enableNsfw,
         retries,
+        concurrency,
         request_timeout_sec: requestTimeoutSec,
       },
     });
@@ -1534,6 +1589,7 @@ adminRoutes.post("/api/v1/admin/tokens/nsfw/refresh/start", requireAdminAuth, as
       runNsfwRefreshJob(c, jobId, unique, {
         enable_nsfw: enableNsfw,
         retries,
+        concurrency,
         request_timeout_ms: requestTimeoutMs,
       }),
     );
@@ -1543,6 +1599,7 @@ adminRoutes.post("/api/v1/admin/tokens/nsfw/refresh/start", requireAdminAuth, as
         status: "queued",
         total: unique.length,
         enable_nsfw: enableNsfw,
+        concurrency,
         request_timeout_sec: requestTimeoutSec,
       }),
     );
