@@ -265,6 +265,8 @@ async function setNsfwForToken(
 ): Promise<{ ok: boolean; status: number; grpcStatus: number; error: string }> {
   const cookie = buildSsoCookie(token, cfCookie);
   const payload = buildEnableNsfwPayload();
+  const payloadBody = new Uint8Array(payload.length);
+  payloadBody.set(payload);
   try {
     const res = await fetch(NSFW_GRPC_API, {
       method: "POST",
@@ -278,7 +280,7 @@ async function setNsfwForToken(
         "x-user-agent": "connect-es/2.1.1",
         Cookie: cookie,
       },
-      body: new Blob([payload], { type: "application/grpc-web+proto" }),
+      body: payloadBody.buffer,
     });
     if (res.status !== 200) {
       return { ok: false, status: res.status, grpcStatus: -1, error: `HTTP ${res.status}` };
