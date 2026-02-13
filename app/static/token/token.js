@@ -18,14 +18,17 @@ var isLoadDataRunning = false;
 var pendingLoadData = false;
 var isStatsRefreshRunning = false;
 var loadDataSeq = 0;
+var activeRefreshJob = null;
+var refreshJobPollTimer = null;
+var lastRefreshJobSnapshot = null;
 
 const TOKEN_LOAD_TIMEOUT_MS = 20000;
 const TOKEN_REFRESH_TIMEOUT_MS = 30000;
 const TOKEN_STATS_TIMEOUT_MS = 12000;
 const LIVE_STATS_INTERVAL_MS = 10000;
-const NSFW_REFRESH_CHUNK_SIZE = 10;
-const NSFW_REFRESH_CHUNK_CONCURRENCY = 2;
-const NSFW_REFRESH_CHUNK_RETRIES = 0;
+const TOKEN_JOB_POLL_INTERVAL_MS = 1200;
+const TOKEN_ACTIVE_JOB_STORAGE_KEY = 'grok2api_token_active_job';
+const NSFW_REFRESH_JOB_RETRIES = 0;
 
 var displayTokens = [];
 var filterState = {
@@ -103,6 +106,280 @@ function summarizeFailedItems(payload, maxItems = 3) {
   });
   const more = failed.length > lines.length ? ` 等 ${failed.length} 条` : '';
   return `${lines.join(' | ')}${more}`;
+}
+
+function isRefreshJobRunningStatus(status) {
+  return status === 'queued' || status === 'running';
+}
+
+function parseStoredRefreshJob(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const jobId = String(parsed.jobId || '').trim();
+    const jobType = String(parsed.jobType || '').trim();
+    if (!jobId || !jobType) return null;
+    return { jobId, jobType };
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveActiveRefreshJob(jobId, jobType) {
+  activeRefreshJob = { jobId, jobType };
+  try {
+    localStorage.setItem(TOKEN_ACTIVE_JOB_STORAGE_KEY, JSON.stringify(activeRefreshJob));
+  } catch (e) {}
+}
+
+function clearActiveRefreshJob() {
+  activeRefreshJob = null;
+  lastRefreshJobSnapshot = null;
+  try {
+    localStorage.removeItem(TOKEN_ACTIVE_JOB_STORAGE_KEY);
+  } catch (e) {}
+}
+
+function restoreActiveRefreshJob() {
+  if (activeRefreshJob && activeRefreshJob.jobId) return activeRefreshJob;
+  try {
+    const raw = localStorage.getItem(TOKEN_ACTIVE_JOB_STORAGE_KEY);
+    activeRefreshJob = parseStoredRefreshJob(raw);
+    return activeRefreshJob;
+  } catch (e) {
+    return null;
+  }
+}
+
+function updateRefreshJobUi(job, options = {}) {
+  const silent = Boolean(options.silent);
+  const nsfwBtn = document.getElementById('btn-refresh-nsfw-all');
+  if (nsfwBtn) nsfwBtn.disabled = isRefreshJobRunningStatus(String(job?.status || ''));
+  const container = document.getElementById('batch-progress');
+  const text = document.getElementById('batch-progress-text');
+  const pauseBtn = document.getElementById('btn-pause-action');
+  const stopBtn = document.getElementById('btn-stop-action');
+  if (container && text) {
+    const total = Number(job?.total || 0);
+    const processed = Number(job?.processed || 0);
+    const success = Number(job?.success || 0);
+    const failed = Number(job?.failed || 0);
+    const step = String(job?.current_step || '').trim();
+    const status = String(job?.status || '').trim();
+    const pct = total > 0 ? Math.min(100, Math.floor((processed / total) * 100)) : 0;
+    const parts = [
+      `${pct}%`,
+      `${processed}/${total}`,
+      `成功 ${success}`,
+      `失败 ${failed}`,
+    ];
+    if (status === 'queued') parts.push('排队中');
+    if (status === 'running' && step) parts.push(step);
+    if (status === 'cancelled') parts.push('已取消');
+    if (status === 'failed') parts.push('已失败');
+    if (status === 'completed') parts.push('已完成');
+    text.textContent = parts.join(' · ');
+    container.classList.remove('hidden');
+  }
+  if (pauseBtn) pauseBtn.classList.add('hidden');
+  if (stopBtn) {
+    if (isRefreshJobRunningStatus(String(job?.status || ''))) {
+      stopBtn.textContent = '取消任务';
+      stopBtn.classList.remove('hidden');
+    } else {
+      stopBtn.classList.add('hidden');
+    }
+  }
+  setActionButtonsState();
+  if (!silent) {
+    logAdminDebug('token:refreshJob:ui', {
+      jobId: job?.job_id || '',
+      status: job?.status || '',
+      processed: job?.processed || 0,
+      total: job?.total || 0,
+    });
+  }
+}
+
+function resetRefreshJobUi() {
+  const nsfwBtn = document.getElementById('btn-refresh-nsfw-all');
+  if (nsfwBtn) nsfwBtn.disabled = false;
+  const container = document.getElementById('batch-progress');
+  const text = document.getElementById('batch-progress-text');
+  const pauseBtn = document.getElementById('btn-pause-action');
+  const stopBtn = document.getElementById('btn-stop-action');
+  if (text) text.textContent = '';
+  if (container) container.classList.add('hidden');
+  if (pauseBtn) pauseBtn.classList.add('hidden');
+  if (stopBtn) stopBtn.classList.add('hidden');
+  setActionButtonsState();
+}
+
+function stopRefreshJobPolling() {
+  if (refreshJobPollTimer) clearTimeout(refreshJobPollTimer);
+  refreshJobPollTimer = null;
+}
+
+async function pollRefreshJobOnce(options = {}) {
+  const silent = Boolean(options.silent);
+  const current = activeRefreshJob || restoreActiveRefreshJob();
+  if (!current || !current.jobId) {
+    stopRefreshJobPolling();
+    resetRefreshJobUi();
+    return null;
+  }
+
+  try {
+    const res = await fetch(`/api/v1/admin/jobs/${encodeURIComponent(current.jobId)}`, {
+      headers: buildAuthHeaders(apiKey),
+      cache: 'no-store',
+    });
+    const payload = await parseJsonSafely(res);
+    if (res.status === 401) {
+      logout();
+      return null;
+    }
+    if (!res.ok) {
+      if (!silent) {
+        showToast(extractApiErrorMessage(payload, '读取任务状态失败'), 'error');
+      }
+      stopRefreshJobPolling();
+      clearActiveRefreshJob();
+      resetRefreshJobUi();
+      return null;
+    }
+    const job = payload?.job || null;
+    if (!job) {
+      stopRefreshJobPolling();
+      clearActiveRefreshJob();
+      resetRefreshJobUi();
+      return null;
+    }
+
+    lastRefreshJobSnapshot = job;
+    updateRefreshJobUi(job, { silent });
+    if (isRefreshJobRunningStatus(String(job.status || ''))) {
+      if (hasTokenDom()) {
+        refreshJobPollTimer = setTimeout(() => {
+          pollRefreshJobOnce({ silent: true });
+        }, TOKEN_JOB_POLL_INTERVAL_MS);
+      }
+      return job;
+    }
+
+    stopRefreshJobPolling();
+    clearActiveRefreshJob();
+    const summary = job?.result?.summary || {
+      total: Number(job.total || 0),
+      success: Number(job.success || 0),
+      failed: Number(job.failed || 0),
+      invalidated: Number(job.invalidated || 0),
+    };
+    const total = Number(summary.total || 0);
+    const success = Number(summary.success || 0);
+    const failed = Number(summary.failed || 0);
+    const invalidated = Number(summary.invalidated || 0);
+    const failedDetails = summarizeFailedItems(job?.result || {});
+
+    if (job.status === 'completed') {
+      showToast(`任务完成：总计 ${total}，成功 ${success}，失败 ${failed}，失效 ${invalidated}`, failed > 0 ? 'info' : 'success');
+      if (failedDetails) showToast(`失败详情: ${failedDetails}`, 'warning');
+    } else if (job.status === 'cancelled') {
+      showToast('任务已取消', 'info');
+    } else if (job.status === 'failed') {
+      const msg = String(job.last_error || '').trim() || '任务执行失败';
+      showToast(msg, 'error');
+      if (failedDetails) showToast(`失败详情: ${failedDetails}`, 'warning');
+    }
+    if (hasTokenDom()) {
+      loadData();
+      resetRefreshJobUi();
+    }
+    return job;
+  } catch (e) {
+    if (!silent) {
+      showToast(`读取任务状态失败: ${normalizeRequestErrorMessage(e, '请求失败')}`, 'error');
+    }
+    return null;
+  }
+}
+
+async function startRefreshJob(endpoint, body, jobType, options = {}) {
+  const silent = Boolean(options.silent);
+  const current = activeRefreshJob || restoreActiveRefreshJob();
+  if (current && current.jobId) {
+    if (!silent) showToast('当前已有刷新任务在执行', 'info');
+    return false;
+  }
+  const timed = withTimeoutSignal(TOKEN_REFRESH_TIMEOUT_MS);
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildAuthHeaders(apiKey),
+      },
+      body: JSON.stringify(body || {}),
+      signal: timed.signal,
+    });
+    const payload = await parseJsonSafely(res);
+    if (res.status === 401) {
+      logout();
+      return false;
+    }
+    if (!res.ok) {
+      if (!silent) showToast(extractApiErrorMessage(payload, '启动任务失败'), 'error');
+      return false;
+    }
+    const jobId = String(payload?.job_id || '').trim();
+    if (!jobId) {
+      if (!silent) showToast('启动任务失败：缺少任务 ID', 'error');
+      return false;
+    }
+    saveActiveRefreshJob(jobId, jobType);
+    stopRefreshJobPolling();
+    await pollRefreshJobOnce({ silent: true });
+    if (!silent) {
+      const reused = Boolean(payload?.reused);
+      showToast(reused ? '已恢复正在执行的任务' : '任务已启动，可切换 Tab 后继续执行', 'success');
+    }
+    return true;
+  } catch (e) {
+    if (!silent) {
+      showToast(`启动任务失败: ${normalizeRequestErrorMessage(e, '请求失败')}`, 'error');
+    }
+    return false;
+  } finally {
+    timed.done();
+  }
+}
+
+async function cancelActiveRefreshJob() {
+  const current = activeRefreshJob || restoreActiveRefreshJob();
+  if (!current || !current.jobId) return;
+  const timed = withTimeoutSignal(TOKEN_REFRESH_TIMEOUT_MS);
+  try {
+    const res = await fetch(`/api/v1/admin/jobs/${encodeURIComponent(current.jobId)}/cancel`, {
+      method: 'POST',
+      headers: buildAuthHeaders(apiKey),
+      signal: timed.signal,
+    });
+    const payload = await parseJsonSafely(res);
+    if (res.status === 401) {
+      logout();
+      return;
+    }
+    if (!res.ok) {
+      showToast(extractApiErrorMessage(payload, '取消任务失败'), 'error');
+      return;
+    }
+    showToast('已发送取消请求', 'info');
+  } catch (e) {
+    showToast(`取消任务失败: ${normalizeRequestErrorMessage(e, '请求失败')}`, 'error');
+  } finally {
+    timed.done();
+  }
 }
 
 function createNsfwProgressController(btn, originalText, estimatedTotal) {
@@ -372,6 +649,12 @@ async function init() {
   setupConfirmDialog();
   loadData();
   startLiveStats();
+  const storedJob = restoreActiveRefreshJob();
+  if (storedJob && storedJob.jobId) {
+    pollRefreshJobOnce({ silent: true });
+  } else {
+    resetRefreshJobUi();
+  }
 }
 
 function startLiveStats() {
@@ -386,6 +669,7 @@ function cleanup() {
   logAdminDebug('token:cleanup');
   if (liveStatsTimer) clearInterval(liveStatsTimer);
   liveStatsTimer = null;
+  stopRefreshJobPolling();
 }
 
 function registerPage() {
@@ -1347,175 +1631,53 @@ async function refreshStatus(token, btnEl) {
 }
 
 async function refreshAllNsfw() {
-  if (isNsfwRefreshAllRunning) {
-    showToast('NSFW 刷新任务进行中', 'info');
+  if ((activeRefreshJob || restoreActiveRefreshJob())) {
+    showToast('当前已有刷新任务在执行', 'info');
     return;
   }
-
   const ok = await confirmAction(
-    '将对全部 Token 执行：同意用户协议 + 设置年龄 + 开启 NSFW。未成功的 Token 会自动标记为失效，是否继续？',
+    '将对全部 Token 执行：同意用户协议 + 设置年龄 + 开启 NSFW。任务会在后台持续执行，可切换到其他 Tab。是否继续？',
     { okText: '开始刷新' }
   );
   if (!ok) return;
 
-  const btn = document.getElementById('btn-refresh-nsfw-all');
-  const originalText = btn ? btn.innerHTML : '';
-  let tokens = collectKnownTokenValues();
-  if (!tokens.length) {
+  let estimatedTotal = flatTokens.length;
+  if (!estimatedTotal) {
     await loadData();
-    tokens = collectKnownTokenValues();
+    estimatedTotal = flatTokens.length;
   }
-  if (!tokens.length) {
+  if (!estimatedTotal) {
     showToast('未找到可刷新的 Token', 'warning');
     return;
   }
-  const estimatedTotal = tokens.length;
-  isNsfwRefreshAllRunning = true;
-  if (btn) {
-    btn.disabled = true;
-  }
-  const progress = createNsfwProgressController(btn, originalText, estimatedTotal);
-  logNsfwDebug('start', { estimatedTotal });
 
-  try {
-    let usedCompatFallback = false;
-    const chunks = chunkArray(tokens, NSFW_REFRESH_CHUNK_SIZE);
-    let success = 0;
-    let failed = 0;
-    let invalidated = 0;
-    let processed = 0;
-    let hardError = '';
-    const allFailedItems = [];
-
-    for (let i = 0; i < chunks.length; i += 1) {
-      const chunk = chunks[i];
-      progress.setStage(`执行 NSFW 刷新 ${processed}/${estimatedTotal}`);
-      const timedPrimary = withTimeoutSignal(TOKEN_REFRESH_TIMEOUT_MS);
-      let res = await fetch('/api/v1/admin/tokens/nsfw/refresh', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...buildAuthHeaders(apiKey)
-        },
-        body: JSON.stringify({
-          tokens: chunk,
-          enable_nsfw: true,
-          retries: NSFW_REFRESH_CHUNK_RETRIES,
-          concurrency: NSFW_REFRESH_CHUNK_CONCURRENCY,
-        }),
-        signal: timedPrimary.signal,
-      });
-      timedPrimary.done();
-
-      let payload = await parseJsonSafely(res);
-      logNsfwDebug('chunk-response', { index: i + 1, total: chunks.length, status: res.status, ok: res.ok, payload });
-
-      if (res.status === 404 || res.status === 405) {
-        usedCompatFallback = true;
-        progress.setStage(`回退配额刷新 ${processed}/${estimatedTotal}`);
-        const timedFallback = withTimeoutSignal(TOKEN_REFRESH_TIMEOUT_MS);
-        res = await fetch('/api/v1/admin/tokens/refresh', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...buildAuthHeaders(apiKey)
-          },
-          body: JSON.stringify({ tokens: chunk }),
-          signal: timedFallback.signal,
-        });
-        timedFallback.done();
-        payload = await parseJsonSafely(res);
-        logNsfwDebug('chunk-fallback-response', { index: i + 1, total: chunks.length, status: res.status, ok: res.ok, payload });
-        if (res.ok) {
-          payload = {
-            summary: summarizeTokenRefreshResults(payload || {}, chunk.length),
-            compatibility_mode: 'refresh_only',
-          };
-        }
-      }
-
-      if (!res.ok) {
-        failed += chunk.length;
-        hardError = extractApiErrorMessage(payload, hardError || 'NSFW 刷新失败');
-        allFailedItems.push({
-          token: chunk[0] || '',
-          step: 'request',
-          error: hardError,
-        });
-        processed += chunk.length;
-        continue;
-      }
-
-      const summary = payload?.summary || {};
-      const chunkTotal = Number(summary.total || chunk.length);
-      const chunkSuccess = Number(summary.success || 0);
-      const chunkFailed = Number(summary.failed || Math.max(0, chunkTotal - chunkSuccess));
-      const chunkInvalidated = Number(summary.invalidated || 0);
-      success += chunkSuccess;
-      failed += chunkFailed;
-      invalidated += chunkInvalidated;
-      processed += chunk.length;
-      if (Array.isArray(payload?.failed) && payload.failed.length) {
-        allFailedItems.push(...payload.failed);
-      }
-    }
-
-    const total = estimatedTotal;
-    if (hardError && success === 0) {
-      const failedDetails = summarizeFailedItems({ failed: allFailedItems });
-      if (failedDetails) {
-        showToast(`失败详情: ${failedDetails}`, 'warning');
-      }
-      showToast(hardError, 'error');
-      logNsfwDebug('failed', { hardError, failedItems: allFailedItems });
-      return;
-    }
-
-    showToast(
-      `NSFW 刷新完成：总计 ${total}，成功 ${success}，失败 ${failed}，失效 ${invalidated}`,
-      failed > 0 ? 'info' : 'success'
-    );
-    const failedDetails = summarizeFailedItems({ failed: allFailedItems });
-    if (failedDetails) {
-      showToast(`失败详情: ${failedDetails}`, 'warning');
-    }
-    if (usedCompatFallback) {
-      showToast('当前部署未提供 NSFW 专用接口，已降级为 Token 配额刷新。', 'warning');
-    }
-    logNsfwDebug('completed', { total, success, failed, invalidated, usedCompatFallback, failedItems: allFailedItems });
-    loadData();
-  } catch (e) {
-    showToast(`NSFW 刷新失败: ${normalizeRequestErrorMessage(e, '请求失败')}`, 'error');
-    logNsfwDebug('exception', { message: e?.message || String(e), error: e });
-  } finally {
-    isNsfwRefreshAllRunning = false;
-    if (btn) {
-      btn.disabled = false;
-    }
-    progress.stop();
+  logNsfwDebug('job-start', { estimatedTotal });
+  const started = await startRefreshJob(
+    '/api/v1/admin/tokens/nsfw/refresh/start',
+    {
+      all: true,
+      enable_nsfw: true,
+      retries: NSFW_REFRESH_JOB_RETRIES,
+    },
+    'token_nsfw_refresh'
+  );
+  if (!started) {
+    logNsfwDebug('job-start-failed');
   }
 }
 
 async function startBatchRefresh() {
-  if (isBatchProcessing) {
+  if (isBatchProcessing || (activeRefreshJob || restoreActiveRefreshJob())) {
     showToast('当前有任务进行中', 'info');
     return;
   }
 
-  const selected = flatTokens.filter(t => t._selected);
+  const selected = flatTokens.filter(t => t._selected).map(t => normalizeSsoToken(t.token)).filter(Boolean);
   if (selected.length === 0) return showToast('未选择 Token', 'error');
+  const ok = await confirmAction(`将刷新选中的 ${selected.length} 个 Token，任务会后台执行，可切换 Tab。是否继续？`, { okText: '开始刷新' });
+  if (!ok) return;
 
-  // Init state
-  isBatchProcessing = true;
-  isBatchPaused = false;
-  currentBatchAction = 'refresh';
-  batchQueue = selected.map(t => normalizeSsoToken(t.token));
-  batchTotal = batchQueue.length;
-  batchProcessed = 0;
-
-  updateBatchProgress();
-  setActionButtonsState();
-  processBatchQueue();
+  await startRefreshJob('/api/v1/admin/tokens/refresh/start', { tokens: selected }, 'token_refresh');
 }
 
 async function processBatchQueue() {
@@ -1579,6 +1741,10 @@ function toggleBatchPause() {
 }
 
 function stopBatchRefresh() {
+  if (activeRefreshJob) {
+    cancelActiveRefreshJob();
+    return;
+  }
   if (!isBatchProcessing) return;
   finishBatchProcess(true);
 }
@@ -1612,6 +1778,12 @@ function updateBatchProgress() {
   const pauseBtn = document.getElementById('btn-pause-action');
   const stopBtn = document.getElementById('btn-stop-action');
   if (!container || !text) return;
+  if (activeRefreshJob) {
+    if (lastRefreshJobSnapshot) {
+      updateRefreshJobUi(lastRefreshJobSnapshot, { silent: true });
+    }
+    return;
+  }
   if (!isBatchProcessing) {
     container.classList.add('hidden');
     if (pauseBtn) pauseBtn.classList.add('hidden');
@@ -1630,7 +1802,7 @@ function updateBatchProgress() {
 
 function setActionButtonsState() {
   const selectedCount = flatTokens.filter(t => t._selected).length;
-  const disabled = isBatchProcessing;
+  const disabled = isBatchProcessing || Boolean(activeRefreshJob);
   const exportBtn = document.getElementById('btn-batch-export');
   const updateBtn = document.getElementById('btn-batch-update');
   const deleteBtn = document.getElementById('btn-batch-delete');

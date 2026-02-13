@@ -39,6 +39,13 @@ import { checkRateLimits } from "../grok/rateLimits";
 import { addRequestLog, clearRequestLogs, getRequestLogs, getRequestStats } from "../repo/logs";
 import { getRefreshProgress, setRefreshProgress } from "../repo/refreshProgress";
 import {
+  createAdminJob,
+  findRunningAdminJobByType,
+  getAdminJob,
+  requestCancelAdminJob,
+  updateAdminJob,
+} from "../repo/adminJobs";
+import {
   deleteCacheRows,
   getCacheSizeBytes,
   listCacheRowsByType,
@@ -369,6 +376,283 @@ async function refreshTokenLimitsByList(c: any, tokens: string[]): Promise<{ res
     await new Promise((res) => setTimeout(res, 50));
   }
   return { results };
+}
+
+function createAdminJobId(prefix: string): string {
+  const safePrefix = String(prefix || "job").replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "job";
+  const random = crypto.randomUUID().replace(/-/g, "");
+  return `${safePrefix}_${random}`;
+}
+
+async function isCancelRequested(c: any, jobId: string): Promise<boolean> {
+  const job = await getAdminJob(c.env.DB, jobId);
+  return Boolean(job?.cancel_requested);
+}
+
+async function markJobCancelled(
+  c: any,
+  jobId: string,
+  summary: { total: number; processed: number; success: number; failed: number; invalidated: number },
+  result: Record<string, unknown>,
+): Promise<void> {
+  await updateAdminJob(c.env.DB, jobId, {
+    status: "cancelled",
+    total: summary.total,
+    processed: summary.processed,
+    success: summary.success,
+    failed: summary.failed,
+    invalidated: summary.invalidated,
+    current_step: "cancelled",
+    result,
+  });
+}
+
+async function runTokenRefreshJob(c: any, jobId: string, tokens: string[]): Promise<void> {
+  const unique = [...new Set(tokens.map((t) => normalizeSsoToken(t)).filter(Boolean))];
+  const total = unique.length;
+  const summary = { total, processed: 0, success: 0, failed: 0, invalidated: 0 };
+  const results: Record<string, boolean> = {};
+  const failedItems: Array<Record<string, unknown>> = [];
+
+  if (!total) {
+    await updateAdminJob(c.env.DB, jobId, {
+      status: "completed",
+      current_step: "completed",
+      result: { summary, results, failed: failedItems },
+    });
+    return;
+  }
+
+  await updateAdminJob(c.env.DB, jobId, {
+    status: "running",
+    total,
+    current_step: "refreshing",
+  });
+
+  try {
+    const settings = await getSettings(c.env);
+    const cf = normalizeCfCookie(settings.grok.cf_clearance ?? "");
+    const placeholders = unique.map(() => "?").join(",");
+    const typeRows = placeholders
+      ? await dbAll<{ token: string; token_type: string }>(
+          c.env.DB,
+          `SELECT token, token_type FROM tokens WHERE token IN (${placeholders})`,
+          unique,
+        )
+      : [];
+    const tokenTypeByToken = new Map(typeRows.map((r) => [r.token, r.token_type]));
+
+    for (let i = 0; i < unique.length; i++) {
+      const token = unique[i]!;
+      if (i % 3 === 0 && (await isCancelRequested(c, jobId))) {
+        await markJobCancelled(c, jobId, summary, {
+          summary,
+          results,
+          failed: failedItems,
+        });
+        return;
+      }
+      let ok = false;
+      let errMsg = "";
+      try {
+        const cookie = buildSsoCookie(token, cf);
+        const tokenType = tokenTypeByToken.get(token) ?? "sso";
+        const r = await checkRateLimits(cookie, settings.grok, "grok-4-fast");
+        const remaining = (r as any)?.remainingTokens;
+        let heavyRemaining: number | null = null;
+        if (tokenType === "ssoSuper") {
+          const rh = await checkRateLimits(cookie, settings.grok, "grok-4-heavy");
+          const hv = (rh as any)?.remainingTokens;
+          if (typeof hv === "number") heavyRemaining = hv;
+        }
+        if (typeof remaining === "number") {
+          await updateTokenLimits(c.env.DB, token, {
+            remaining_queries: remaining,
+            ...(heavyRemaining !== null ? { heavy_remaining_queries: heavyRemaining } : {}),
+          });
+          ok = true;
+        } else {
+          errMsg = "missing remainingTokens";
+        }
+      } catch (e) {
+        errMsg = e instanceof Error ? e.message : String(e);
+      }
+
+      results[`sso=${token}`] = ok;
+      summary.processed += 1;
+      if (ok) {
+        summary.success += 1;
+      } else {
+        summary.failed += 1;
+        failedItems.push({
+          token,
+          step: "refresh",
+          error: errMsg || "refresh failed",
+          invalidated: false,
+        });
+      }
+      await updateAdminJob(c.env.DB, jobId, {
+        status: "running",
+        total,
+        processed: summary.processed,
+        success: summary.success,
+        failed: summary.failed,
+        invalidated: 0,
+        current_step: "refreshing",
+      });
+      await new Promise((res) => setTimeout(res, 50));
+    }
+
+    await updateAdminJob(c.env.DB, jobId, {
+      status: "completed",
+      total,
+      processed: summary.processed,
+      success: summary.success,
+      failed: summary.failed,
+      invalidated: 0,
+      current_step: "completed",
+      result: { summary, results, failed: failedItems },
+    });
+  } catch (e) {
+    await updateAdminJob(c.env.DB, jobId, {
+      status: "failed",
+      total,
+      processed: summary.processed,
+      success: summary.success,
+      failed: summary.failed,
+      invalidated: 0,
+      current_step: "failed",
+      last_error: e instanceof Error ? e.message : String(e),
+      result: { summary, results, failed: failedItems },
+    });
+  }
+}
+
+interface NsfwRefreshJobOptions {
+  enable_nsfw: boolean;
+  retries: number;
+}
+
+async function runNsfwRefreshJob(c: any, jobId: string, tokens: string[], options: NsfwRefreshJobOptions): Promise<void> {
+  const unique = [...new Set(tokens.map((t) => normalizeSsoToken(t)).filter(Boolean))];
+  const total = unique.length;
+  const summary = { total, processed: 0, success: 0, failed: 0, invalidated: 0 };
+  const results: Record<string, boolean> = {};
+  const failedItems: Array<Record<string, unknown>> = [];
+
+  if (!total) {
+    await updateAdminJob(c.env.DB, jobId, {
+      status: "completed",
+      current_step: "completed",
+      result: { summary, results, failed: failedItems, enable_nsfw: options.enable_nsfw },
+    });
+    return;
+  }
+
+  await updateAdminJob(c.env.DB, jobId, {
+    status: "running",
+    total,
+    current_step: options.enable_nsfw ? "set_birth_and_nsfw" : "set_birth_only",
+  });
+
+  try {
+    const settings = await getSettings(c.env);
+    const cf = normalizeCfCookie(settings.grok.cf_clearance ?? "");
+    const attempts = Math.max(1, options.retries + 1);
+
+    for (let i = 0; i < unique.length; i++) {
+      const token = unique[i]!;
+      if (i % 2 === 0 && (await isCancelRequested(c, jobId))) {
+        await markJobCancelled(c, jobId, summary, {
+          summary,
+          results,
+          failed: failedItems,
+          enable_nsfw: options.enable_nsfw,
+        });
+        return;
+      }
+
+      let ok = false;
+      let lastStep = "unknown";
+      let lastError = "";
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        const birth = await setBirthDateForToken(token, cf);
+        if (!birth.ok) {
+          lastStep = "birth";
+          lastError = birth.error || `HTTP ${birth.status}`;
+          continue;
+        }
+        if (!options.enable_nsfw) {
+          ok = true;
+          break;
+        }
+        const nsfw = await setNsfwForToken(token, cf);
+        if (nsfw.ok) {
+          ok = true;
+          break;
+        }
+        lastStep = "nsfw";
+        lastError = nsfw.error || `HTTP ${nsfw.status}`;
+      }
+
+      results[`sso=${token}`] = ok;
+      summary.processed += 1;
+      if (ok) {
+        summary.success += 1;
+      } else {
+        summary.failed += 1;
+        failedItems.push({
+          token,
+          step: lastStep,
+          error: lastError || "nsfw refresh failed",
+          attempts,
+          invalidated: false,
+        });
+      }
+      await updateAdminJob(c.env.DB, jobId, {
+        status: "running",
+        total,
+        processed: summary.processed,
+        success: summary.success,
+        failed: summary.failed,
+        invalidated: 0,
+        current_step: options.enable_nsfw ? "set_birth_and_nsfw" : "set_birth_only",
+      });
+    }
+
+    await updateAdminJob(c.env.DB, jobId, {
+      status: "completed",
+      total,
+      processed: summary.processed,
+      success: summary.success,
+      failed: summary.failed,
+      invalidated: 0,
+      current_step: "completed",
+      result: {
+        summary,
+        results,
+        failed: failedItems,
+        enable_nsfw: options.enable_nsfw,
+      },
+    });
+  } catch (e) {
+    await updateAdminJob(c.env.DB, jobId, {
+      status: "failed",
+      total,
+      processed: summary.processed,
+      success: summary.success,
+      failed: summary.failed,
+      invalidated: 0,
+      current_step: "failed",
+      last_error: e instanceof Error ? e.message : String(e),
+      result: {
+        summary,
+        results,
+        failed: failedItems,
+        enable_nsfw: options.enable_nsfw,
+      },
+    });
+  }
 }
 
 async function clearKvCacheByType(
@@ -1010,6 +1294,43 @@ adminRoutes.post("/api/v1/admin/tokens/refresh", requireAdminAuth, async (c) => 
   }
 });
 
+adminRoutes.post("/api/v1/admin/tokens/refresh/start", requireAdminAuth, async (c) => {
+  try {
+    const body = (await c.req.json()) as any;
+    const unique = await resolveTokensForRefresh(c, body, true);
+    if (!unique.length) return c.json(legacyErr("No tokens provided"), 400);
+    const existing = await findRunningAdminJobByType(c.env.DB, "token_refresh");
+    if (existing) {
+      return c.json(
+        legacyOk({
+          job_id: existing.job_id,
+          status: existing.status,
+          reused: true,
+        }),
+      );
+    }
+    const jobId = createAdminJobId("refresh");
+    await createAdminJob(c.env.DB, {
+      job_id: jobId,
+      job_type: "token_refresh",
+      total: unique.length,
+      payload: {
+        token_count: unique.length,
+      },
+    });
+    c.executionCtx.waitUntil(runTokenRefreshJob(c, jobId, unique));
+    return c.json(
+      legacyOk({
+        job_id: jobId,
+        status: "queued",
+        total: unique.length,
+      }),
+    );
+  } catch (e) {
+    return c.json(legacyErr(`Start refresh failed: ${e instanceof Error ? e.message : String(e)}`), 500);
+  }
+});
+
 adminRoutes.post("/api/v1/admin/tokens/nsfw/refresh", requireAdminAuth, async (c) => {
   try {
     const body = (await c.req.json()) as any;
@@ -1075,6 +1396,92 @@ adminRoutes.post("/api/v1/admin/tokens/nsfw/refresh", requireAdminAuth, async (c
     );
   } catch (e) {
     return c.json(legacyErr(`NSFW refresh failed: ${e instanceof Error ? e.message : String(e)}`), 500);
+  }
+});
+
+adminRoutes.post("/api/v1/admin/tokens/nsfw/refresh/start", requireAdminAuth, async (c) => {
+  try {
+    const body = (await c.req.json()) as any;
+    const unique = await resolveTokensForRefresh(c, body, true);
+    if (!unique.length) return c.json(legacyErr("No tokens provided"), 400);
+    const enableNsfw = parseOptionalBoolean(body?.enable_nsfw, true);
+    const retries = parsePositiveInt(body?.retries, NSFW_DEFAULT_RETRIES, 0, 10);
+    const existing = await findRunningAdminJobByType(c.env.DB, "token_nsfw_refresh");
+    if (existing) {
+      return c.json(
+        legacyOk({
+          job_id: existing.job_id,
+          status: existing.status,
+          reused: true,
+        }),
+      );
+    }
+    const jobId = createAdminJobId("nsfw");
+    await createAdminJob(c.env.DB, {
+      job_id: jobId,
+      job_type: "token_nsfw_refresh",
+      total: unique.length,
+      payload: {
+        token_count: unique.length,
+        enable_nsfw: enableNsfw,
+        retries,
+      },
+    });
+    c.executionCtx.waitUntil(
+      runNsfwRefreshJob(c, jobId, unique, {
+        enable_nsfw: enableNsfw,
+        retries,
+      }),
+    );
+    return c.json(
+      legacyOk({
+        job_id: jobId,
+        status: "queued",
+        total: unique.length,
+        enable_nsfw: enableNsfw,
+      }),
+    );
+  } catch (e) {
+    return c.json(legacyErr(`Start NSFW refresh failed: ${e instanceof Error ? e.message : String(e)}`), 500);
+  }
+});
+
+adminRoutes.get("/api/v1/admin/jobs/:jobId", requireAdminAuth, async (c) => {
+  try {
+    const jobId = String(c.req.param("jobId") || "").trim();
+    if (!jobId) return c.json(legacyErr("Missing job id"), 400);
+    const job = await getAdminJob(c.env.DB, jobId);
+    if (!job) return c.json(legacyErr("Job not found"), 404);
+    return c.json(legacyOk({ job }));
+  } catch (e) {
+    return c.json(legacyErr(`Get job failed: ${e instanceof Error ? e.message : String(e)}`), 500);
+  }
+});
+
+adminRoutes.post("/api/v1/admin/jobs/:jobId/cancel", requireAdminAuth, async (c) => {
+  try {
+    const jobId = String(c.req.param("jobId") || "").trim();
+    if (!jobId) return c.json(legacyErr("Missing job id"), 400);
+    const job = await getAdminJob(c.env.DB, jobId);
+    if (!job) return c.json(legacyErr("Job not found"), 404);
+    if (!["queued", "running"].includes(job.status)) {
+      return c.json(
+        legacyOk({
+          job_id: job.job_id,
+          status: job.status,
+          cancel_requested: job.cancel_requested,
+        }),
+      );
+    }
+    const updated = await requestCancelAdminJob(c.env.DB, jobId);
+    return c.json(
+      legacyOk({
+        job_id: jobId,
+        cancel_requested: updated,
+      }),
+    );
+  } catch (e) {
+    return c.json(legacyErr(`Cancel job failed: ${e instanceof Error ? e.message : String(e)}`), 500);
   }
 });
 

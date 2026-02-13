@@ -1,10 +1,15 @@
 let mobileNavKeydownHandler = null;
 let navLoadInFlight = null;
 let activePageKey = null;
+let themeOutsideClickHandler = null;
 const scriptLoaders = new Map();
 window.__pageRegistry = window.__pageRegistry || {};
 const ADMIN_QUERY_STORAGE_KEY = 'grok2api_admin_query';
 const ADMIN_DEBUG_KEY = 'grok2api_admin_debug';
+const THEME_MODE_STORAGE_KEY = 'grok2api_theme_mode';
+const THEME_OPTIONS = ['light', 'dark', 'system'];
+let themeMediaQuery = null;
+let themeMediaHandlerBound = false;
 
 function isAdminDebug() {
   try {
@@ -30,6 +35,131 @@ window.disableAdminDebug = () => {
   try { localStorage.removeItem(ADMIN_DEBUG_KEY); } catch (e) {}
   console.log('[AdminDebug] disabled');
 };
+
+function normalizeThemeMode(mode) {
+  const v = String(mode || '').trim().toLowerCase();
+  return THEME_OPTIONS.includes(v) ? v : 'system';
+}
+
+function getStoredThemeMode() {
+  try {
+    return normalizeThemeMode(localStorage.getItem(THEME_MODE_STORAGE_KEY) || 'system');
+  } catch (e) {
+    return 'system';
+  }
+}
+
+function setStoredThemeMode(mode) {
+  try {
+    localStorage.setItem(THEME_MODE_STORAGE_KEY, normalizeThemeMode(mode));
+  } catch (e) {}
+}
+
+function getSystemTheme() {
+  const prefersDark = Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  return prefersDark ? 'dark' : 'light';
+}
+
+function resolveTheme(mode) {
+  const normalized = normalizeThemeMode(mode);
+  if (normalized === 'system') return getSystemTheme();
+  return normalized;
+}
+
+function applyTheme(mode) {
+  const normalized = normalizeThemeMode(mode);
+  const resolved = resolveTheme(normalized);
+  document.documentElement.setAttribute('data-theme-mode', normalized);
+  document.documentElement.setAttribute('data-theme', resolved);
+
+  if (window.matchMedia && !themeMediaQuery) {
+    themeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  }
+  if (themeMediaQuery && !themeMediaHandlerBound) {
+    const onSystemThemeChanged = () => {
+      if (getStoredThemeMode() !== 'system') return;
+      document.documentElement.setAttribute('data-theme', getSystemTheme());
+    };
+    if (typeof themeMediaQuery.addEventListener === 'function') {
+      themeMediaQuery.addEventListener('change', onSystemThemeChanged);
+    } else if (typeof themeMediaQuery.addListener === 'function') {
+      themeMediaQuery.addListener(onSystemThemeChanged);
+    }
+    themeMediaHandlerBound = true;
+  }
+}
+
+function formatThemeButtonLabel(mode) {
+  const normalized = normalizeThemeMode(mode);
+  if (normalized === 'light') return '亮白';
+  if (normalized === 'dark') return '暗黑';
+  return '跟随系统';
+}
+
+function updateThemeControls(container) {
+  const mode = getStoredThemeMode();
+  const label = formatThemeButtonLabel(mode);
+  const btns = Array.from(container.querySelectorAll('#theme-mode-btn, [data-theme-mode-btn]'));
+  btns.forEach((btn) => {
+    btn.textContent = label;
+    btn.setAttribute('title', `外观模式: ${label}`);
+  });
+  const items = Array.from(container.querySelectorAll('.theme-menu-item[data-theme-mode]'));
+  items.forEach((item) => {
+    const itemMode = normalizeThemeMode(item.getAttribute('data-theme-mode') || '');
+    item.classList.toggle('active', itemMode === mode);
+  });
+}
+
+function closeAllThemeMenus(container) {
+  container.querySelectorAll('#theme-mode-menu, [data-theme-mode-menu]').forEach((menu) => {
+    menu.classList.remove('is-open');
+    menu.classList.add('hidden');
+  });
+}
+
+function setupThemeControls(container) {
+  applyTheme(getStoredThemeMode());
+  updateThemeControls(container);
+
+  const openButtons = Array.from(container.querySelectorAll('#theme-mode-btn, [data-theme-mode-btn]'));
+  openButtons.forEach((btn) => {
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      const wrapper = btn.closest('.theme-switcher');
+      const menu = wrapper ? wrapper.querySelector('#theme-mode-menu, [data-theme-mode-menu]') : null;
+      if (!menu) return;
+      const willOpen = menu.classList.contains('hidden');
+      closeAllThemeMenus(container);
+      if (willOpen) {
+        menu.classList.remove('hidden');
+        requestAnimationFrame(() => menu.classList.add('is-open'));
+      }
+    });
+  });
+
+  const modeItems = Array.from(container.querySelectorAll('.theme-menu-item[data-theme-mode]'));
+  modeItems.forEach((item) => {
+    item.addEventListener('click', () => {
+      const mode = normalizeThemeMode(item.getAttribute('data-theme-mode') || 'system');
+      setStoredThemeMode(mode);
+      applyTheme(mode);
+      updateThemeControls(container);
+      closeAllThemeMenus(container);
+    });
+  });
+
+  if (themeOutsideClickHandler) {
+    document.removeEventListener('click', themeOutsideClickHandler);
+  }
+  themeOutsideClickHandler = (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest('.theme-switcher')) return;
+    closeAllThemeMenus(container);
+  };
+  document.addEventListener('click', themeOutsideClickHandler);
+}
 
 function setupMobileDrawer(container) {
   const toggleBtn = container.querySelector('#mobile-nav-toggle');
@@ -307,7 +437,7 @@ async function loadAdminHeader() {
   if (!container) return;
   try {
     adminDebug('loadAdminHeader:start', { path: window.location.pathname, search: window.location.search });
-    const res = await fetch('/static/common/header.html?v=4', { cache: 'no-store' });
+    const res = await fetch('/static/common/header.html?v=5', { cache: 'no-store' });
     if (!res.ok) return;
     container.innerHTML = await res.text();
     const normalizedPath = normalizeAdminPath(window.location.pathname);
@@ -316,6 +446,7 @@ async function loadAdminHeader() {
     }
     updateActiveNav(container, normalizedPath);
     setupMobileDrawer(container);
+    setupThemeControls(container);
     if (typeof updateStorageModeButton === 'function') {
       updateStorageModeButton();
     }
@@ -348,8 +479,10 @@ async function loadAdminHeader() {
 window.addEventListener('popstate', () => {
   const path = normalizeAdminPath(window.location.pathname);
   if (!path.startsWith('/admin/')) return;
-  loadAdminPage(path, false);
+  loadAdminPage(`${path}${window.location.search || ''}`, false);
 });
+
+applyTheme(getStoredThemeMode());
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', loadAdminHeader);
