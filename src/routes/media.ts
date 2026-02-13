@@ -330,7 +330,7 @@ mediaRoutes.get("/images/:imgPath{.+}", async (c) => {
       upstream,
       contentType,
       cacheSeconds,
-      contentLength: Number.isFinite(contentLength) ? contentLength : undefined,
+      ...(Number.isFinite(contentLength) ? { contentLength } : {}),
     });
     return new Response(toClient, { status: upstream.status, headers: outHeaders });
   }
@@ -339,7 +339,7 @@ mediaRoutes.get("/images/:imgPath{.+}", async (c) => {
     upstream,
     contentType,
     cacheSeconds,
-    contentLength: Number.isFinite(contentLength) ? contentLength : undefined,
+    ...(Number.isFinite(contentLength) ? { contentLength } : {}),
   });
   return new Response(upstream.body, { status: upstream.status, headers: outHeaders });
 });
