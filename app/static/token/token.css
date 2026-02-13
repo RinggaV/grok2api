@@ -337,3 +337,41 @@
         display: none;
       }
     }
+
+    :root[data-theme="dark"] .geist-table th,
+    :root[data-theme="dark"] .geist-table td {
+      background: var(--surface-1);
+      border-color: var(--border);
+      color: var(--accents-6);
+    }
+
+    :root[data-theme="dark"] .geist-table tr:hover td {
+      background: var(--surface-2);
+    }
+
+    :root[data-theme="dark"] .geist-table tr.row-selected td,
+    :root[data-theme="dark"] .geist-table tr.row-selected:hover td {
+      background: var(--surface-3);
+    }
+
+    :root[data-theme="dark"] .filter-chip span {
+      background: var(--surface-1);
+      color: var(--accents-6);
+      border-color: var(--border);
+    }
+
+    :root[data-theme="dark"] .filter-chip input:checked + span {
+      border-color: var(--accents-3);
+      color: var(--fg);
+      background: var(--surface-3);
+    }
+
+    :root[data-theme="dark"] .badge-gray {
+      background: var(--surface-3);
+      color: var(--accents-5);
+    }
+
+    :root[data-theme="dark"] #batch-actions {
+      background: rgba(15, 23, 42, 0.88);
+      border-color: var(--border);
+    }

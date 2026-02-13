@@ -1,7 +1,7 @@
 /* Config page specific styles (shared styles moved to common.css). */
 
 .config-section {
-  background: #fff;
+  background: var(--surface-1);
   border: 1px solid transparent;
   border-radius: 12px;
   padding: 16px;
@@ -12,7 +12,7 @@
 }
 
 .config-section:hover {
-  border-color: #000;
+  border-color: var(--accents-3);
 }
 
 .config-section-title {
@@ -96,4 +96,9 @@
   .config-copy-btn {
     width: 100%;
   }
+}
+
+:root[data-theme="dark"] .config-copy-btn {
+  background: #e2e8f0;
+  color: #0f172a;
 }

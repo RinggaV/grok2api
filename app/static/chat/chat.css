@@ -566,3 +566,27 @@
     grid-template-columns: 1fr;
   }
 }
+
+:root[data-theme="dark"] .card,
+:root[data-theme="dark"] .msg-bubble,
+:root[data-theme="dark"] .result-card,
+:root[data-theme="dark"] .imagine-metric,
+:root[data-theme="dark"] .image-waterfall .waterfall-item {
+  background: var(--surface-1);
+  border-color: var(--border);
+}
+
+:root[data-theme="dark"] .chat-messages,
+:root[data-theme="dark"] .result-placeholder {
+  background: rgba(15, 23, 42, 0.55);
+  border-color: var(--border);
+}
+
+:root[data-theme="dark"] .chat-options {
+  background: var(--surface-1);
+  border-color: var(--border);
+}
+
+:root[data-theme="dark"] .chat-option {
+  color: var(--accents-6);
+}

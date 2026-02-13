@@ -444,7 +444,7 @@ async function runTokenRefreshJob(c: any, jobId: string, tokens: string[]): Prom
 
     for (let i = 0; i < unique.length; i++) {
       const token = unique[i]!;
-      if (i % 3 === 0 && (await isCancelRequested(c, jobId))) {
+      if (await isCancelRequested(c, jobId)) {
         await markJobCancelled(c, jobId, summary, {
           summary,
           results,
@@ -455,12 +455,28 @@ async function runTokenRefreshJob(c: any, jobId: string, tokens: string[]): Prom
       let ok = false;
       let errMsg = "";
       try {
+        if (await isCancelRequested(c, jobId)) {
+          await markJobCancelled(c, jobId, summary, {
+            summary,
+            results,
+            failed: failedItems,
+          });
+          return;
+        }
         const cookie = buildSsoCookie(token, cf);
         const tokenType = tokenTypeByToken.get(token) ?? "sso";
         const r = await checkRateLimits(cookie, settings.grok, "grok-4-fast");
         const remaining = (r as any)?.remainingTokens;
         let heavyRemaining: number | null = null;
         if (tokenType === "ssoSuper") {
+          if (await isCancelRequested(c, jobId)) {
+            await markJobCancelled(c, jobId, summary, {
+              summary,
+              results,
+              failed: failedItems,
+            });
+            return;
+          }
           const rh = await checkRateLimits(cookie, settings.grok, "grok-4-heavy");
           const hv = (rh as any)?.remainingTokens;
           if (typeof hv === "number") heavyRemaining = hv;
@@ -562,7 +578,7 @@ async function runNsfwRefreshJob(c: any, jobId: string, tokens: string[], option
 
     for (let i = 0; i < unique.length; i++) {
       const token = unique[i]!;
-      if (i % 2 === 0 && (await isCancelRequested(c, jobId))) {
+      if (await isCancelRequested(c, jobId)) {
         await markJobCancelled(c, jobId, summary, {
           summary,
           results,
@@ -576,6 +592,15 @@ async function runNsfwRefreshJob(c: any, jobId: string, tokens: string[], option
       let lastStep = "unknown";
       let lastError = "";
       for (let attempt = 1; attempt <= attempts; attempt++) {
+        if (await isCancelRequested(c, jobId)) {
+          await markJobCancelled(c, jobId, summary, {
+            summary,
+            results,
+            failed: failedItems,
+            enable_nsfw: options.enable_nsfw,
+          });
+          return;
+        }
         const birth = await setBirthDateForToken(token, cf);
         if (!birth.ok) {
           lastStep = "birth";
@@ -585,6 +610,15 @@ async function runNsfwRefreshJob(c: any, jobId: string, tokens: string[], option
         if (!options.enable_nsfw) {
           ok = true;
           break;
+        }
+        if (await isCancelRequested(c, jobId)) {
+          await markJobCancelled(c, jobId, summary, {
+            summary,
+            results,
+            failed: failedItems,
+            enable_nsfw: options.enable_nsfw,
+          });
+          return;
         }
         const nsfw = await setNsfwForToken(token, cf);
         if (nsfw.ok) {
@@ -1474,6 +1508,9 @@ adminRoutes.post("/api/v1/admin/jobs/:jobId/cancel", requireAdminAuth, async (c)
       );
     }
     const updated = await requestCancelAdminJob(c.env.DB, jobId);
+    await updateAdminJob(c.env.DB, jobId, {
+      current_step: "cancel_requested",
+    });
     return c.json(
       legacyOk({
         job_id: jobId,
