@@ -29,11 +29,12 @@ const TOKEN_LOAD_TIMEOUT_MS = 20000;
 const TOKEN_REFRESH_TIMEOUT_MS = 30000;
 const TOKEN_STATS_TIMEOUT_MS = 12000;
 const LIVE_STATS_INTERVAL_MS = 10000;
-const TOKEN_JOB_POLL_INTERVAL_MS = 650;
+const TOKEN_JOB_POLL_INTERVAL_MS = 1200;
 const TOKEN_JOB_POLL_RETRY_BASE_MS = 1200;
 const TOKEN_JOB_POLL_RETRY_MAX_MS = 6000;
 const TOKEN_ACTIVE_JOB_STORAGE_KEY = 'grok2api_token_active_job';
-const NSFW_REFRESH_JOB_RETRIES = 2;
+const NSFW_REFRESH_JOB_RETRIES = 0;
+const NSFW_REFRESH_REQUEST_TIMEOUT_SEC = 15;
 
 var displayTokens = [];
 var filterState = {
@@ -1826,6 +1827,7 @@ async function refreshAllNsfw() {
       all: true,
       enable_nsfw: true,
       retries: NSFW_REFRESH_JOB_RETRIES,
+      request_timeout_sec: NSFW_REFRESH_REQUEST_TIMEOUT_SEC,
     },
     'token_nsfw_refresh'
   );
