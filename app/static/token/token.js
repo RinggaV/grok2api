@@ -21,12 +21,16 @@ var loadDataSeq = 0;
 var activeRefreshJob = null;
 var refreshJobPollTimer = null;
 var lastRefreshJobSnapshot = null;
+var refreshJobPollFailures = 0;
+var tokenVisibilityHookBound = false;
 
 const TOKEN_LOAD_TIMEOUT_MS = 20000;
 const TOKEN_REFRESH_TIMEOUT_MS = 30000;
 const TOKEN_STATS_TIMEOUT_MS = 12000;
 const LIVE_STATS_INTERVAL_MS = 10000;
-const TOKEN_JOB_POLL_INTERVAL_MS = 1200;
+const TOKEN_JOB_POLL_INTERVAL_MS = 650;
+const TOKEN_JOB_POLL_RETRY_BASE_MS = 1200;
+const TOKEN_JOB_POLL_RETRY_MAX_MS = 6000;
 const TOKEN_ACTIVE_JOB_STORAGE_KEY = 'grok2api_token_active_job';
 const NSFW_REFRESH_JOB_RETRIES = 0;
 
@@ -167,6 +171,7 @@ function updateRefreshJobUi(job, options = {}) {
     const failed = Number(job?.failed || 0);
     const step = String(job?.current_step || '').trim();
     const status = String(job?.status || '').trim();
+    const updatedAt = Number(job?.updated_at || 0);
     const pct = total > 0 ? Math.min(100, Math.floor((processed / total) * 100)) : 0;
     const parts = [
       `${pct}%`,
@@ -179,6 +184,10 @@ function updateRefreshJobUi(job, options = {}) {
     if (status === 'cancelled') parts.push('已取消');
     if (status === 'failed') parts.push('已失败');
     if (status === 'completed') parts.push('已完成');
+    if (updatedAt > 0) {
+      const ageSec = Math.max(0, Math.floor((Date.now() - updatedAt) / 1000));
+      parts.push(`更新 ${ageSec}s 前`);
+    }
     text.textContent = parts.join(' · ');
     container.classList.remove('hidden');
   }
@@ -219,6 +228,17 @@ function resetRefreshJobUi() {
 function stopRefreshJobPolling() {
   if (refreshJobPollTimer) clearTimeout(refreshJobPollTimer);
   refreshJobPollTimer = null;
+  refreshJobPollFailures = 0;
+}
+
+function scheduleRefreshJobPolling(delayMs, options = {}) {
+  const silent = Boolean(options.silent);
+  if (!hasTokenDom()) return;
+  if (refreshJobPollTimer) clearTimeout(refreshJobPollTimer);
+  const delay = Math.max(120, Math.floor(Number(delayMs) || TOKEN_JOB_POLL_INTERVAL_MS));
+  refreshJobPollTimer = setTimeout(() => {
+    pollRefreshJobOnce({ silent });
+  }, delay);
 }
 
 async function pollRefreshJobOnce(options = {}) {
@@ -241,30 +261,36 @@ async function pollRefreshJobOnce(options = {}) {
       return null;
     }
     if (!res.ok) {
+      if (res.status === 404) {
+        stopRefreshJobPolling();
+        clearActiveRefreshJob();
+        resetRefreshJobUi();
+        if (!silent) showToast('任务不存在或已过期', 'warning');
+        return null;
+      }
+      refreshJobPollFailures += 1;
+      const retryDelay = Math.min(
+        TOKEN_JOB_POLL_RETRY_MAX_MS,
+        TOKEN_JOB_POLL_RETRY_BASE_MS * (refreshJobPollFailures <= 1 ? 1 : Math.pow(2, Math.min(3, refreshJobPollFailures - 1)))
+      );
+      scheduleRefreshJobPolling(retryDelay, { silent: true });
       if (!silent) {
         showToast(extractApiErrorMessage(payload, '读取任务状态失败'), 'error');
       }
-      stopRefreshJobPolling();
-      clearActiveRefreshJob();
-      resetRefreshJobUi();
       return null;
     }
     const job = payload?.job || null;
     if (!job) {
-      stopRefreshJobPolling();
-      clearActiveRefreshJob();
-      resetRefreshJobUi();
+      refreshJobPollFailures += 1;
+      scheduleRefreshJobPolling(TOKEN_JOB_POLL_RETRY_BASE_MS, { silent: true });
       return null;
     }
 
+    refreshJobPollFailures = 0;
     lastRefreshJobSnapshot = job;
     updateRefreshJobUi(job, { silent });
     if (isRefreshJobRunningStatus(String(job.status || ''))) {
-      if (hasTokenDom()) {
-        refreshJobPollTimer = setTimeout(() => {
-          pollRefreshJobOnce({ silent: true });
-        }, TOKEN_JOB_POLL_INTERVAL_MS);
-      }
+      scheduleRefreshJobPolling(TOKEN_JOB_POLL_INTERVAL_MS, { silent: true });
       return job;
     }
 
@@ -298,6 +324,12 @@ async function pollRefreshJobOnce(options = {}) {
     }
     return job;
   } catch (e) {
+    refreshJobPollFailures += 1;
+    const retryDelay = Math.min(
+      TOKEN_JOB_POLL_RETRY_MAX_MS,
+      TOKEN_JOB_POLL_RETRY_BASE_MS * (refreshJobPollFailures <= 1 ? 1 : Math.pow(2, Math.min(3, refreshJobPollFailures - 1)))
+    );
+    scheduleRefreshJobPolling(retryDelay, { silent: true });
     if (!silent) {
       showToast(`读取任务状态失败: ${normalizeRequestErrorMessage(e, '请求失败')}`, 'error');
     }
@@ -654,6 +686,17 @@ async function init() {
     pollRefreshJobOnce({ silent: true });
   } else {
     resetRefreshJobUi();
+  }
+  if (!tokenVisibilityHookBound) {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!hasTokenDom()) return;
+      const job = activeRefreshJob || restoreActiveRefreshJob();
+      if (job && job.jobId) {
+        pollRefreshJobOnce({ silent: true });
+      }
+    });
+    tokenVisibilityHookBound = true;
   }
 }
 
