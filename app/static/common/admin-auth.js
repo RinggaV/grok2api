@@ -32,6 +32,7 @@ function withAdminQuery(url) {
 
 const ADMIN_FETCH_TIMEOUT_MS = 5000;
 const ADMIN_CACHE_PREFIX = 'grok2api_admin_cache:';
+const ADMIN_CACHE_DISABLE_DATA_KEYS = new Set(['tokens']);
 const _fetch = window.fetch.bind(window);
 window.fetch = (input, init) => {
   const adminQuery = getAdminQuery();
@@ -82,33 +83,96 @@ function getAdminCacheKey(key, suffix, query) {
   return `${ADMIN_CACHE_PREFIX}${key}:${suffix}:${q}`;
 }
 
+function isQuotaExceededError(err) {
+  const name = String(err?.name || '');
+  const msg = String(err?.message || '');
+  return name === 'QuotaExceededError' || msg.includes('exceeded the quota');
+}
+
+function safeStorageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (e) {
+    return null;
+  }
+}
+
+function safeStorageRemove(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch (e) {}
+}
+
+function clearAdminCacheByKey(cacheKey, keepQuery = '') {
+  try {
+    const prefix = `${ADMIN_CACHE_PREFIX}${cacheKey}:`;
+    const keepSuffix = keepQuery ? `:${keepQuery}` : '';
+    for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(prefix)) continue;
+      if (keepSuffix && key.endsWith(keepSuffix)) continue;
+      localStorage.removeItem(key);
+    }
+  } catch (e) {}
+}
+
+function safeStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (e) {
+    if (isQuotaExceededError(e)) return false;
+    return false;
+  }
+}
+
+function persistAdminCache(cacheKey, dataKey, etagKey, adminQuery, etag, data) {
+  if (ADMIN_CACHE_DISABLE_DATA_KEYS.has(cacheKey)) return;
+  let serialized = '';
+  try {
+    serialized = JSON.stringify(data);
+  } catch (e) {
+    return;
+  }
+  clearAdminCacheByKey(cacheKey, adminQuery);
+  if (etag) safeStorageSet(etagKey, etag);
+  const ok = safeStorageSet(dataKey, serialized);
+  if (!ok) {
+    clearAdminCacheByKey(cacheKey, '');
+    const retryOk = safeStorageSet(dataKey, serialized);
+    if (!retryOk) {
+      logAdminDebug('fetchAdminJsonCached:skip-store-quota', { cacheKey, bytes: serialized.length });
+    }
+  }
+}
+
 async function fetchAdminJsonCached(cacheKey, url, init = {}) {
   const adminQuery = getAdminQuery();
   const dataKey = getAdminCacheKey(cacheKey, 'data', adminQuery);
   const etagKey = getAdminCacheKey(cacheKey, 'etag', adminQuery);
   const headers = new Headers(init.headers || {});
-  const cachedEtag = localStorage.getItem(etagKey);
+  const canPersist = !ADMIN_CACHE_DISABLE_DATA_KEYS.has(cacheKey);
+  const cachedEtag = canPersist ? safeStorageGet(etagKey) : null;
   if (cachedEtag) headers.set('If-None-Match', cachedEtag);
 
   logAdminDebug('fetchAdminJsonCached:start', { cacheKey, url, hasEtag: Boolean(cachedEtag), adminQuery });
   const res = await fetch(url, { ...init, headers });
   if (res.status === 304) {
-    const cached = localStorage.getItem(dataKey);
+    const cached = canPersist ? safeStorageGet(dataKey) : null;
     if (cached) {
       try {
         logAdminDebug('fetchAdminJsonCached:304-cache-hit', { cacheKey });
         return { data: JSON.parse(cached), fromCache: true };
       } catch (e) {
         logAdminDebug('fetchAdminJsonCached:304-cache-parse-failed', { cacheKey });
-        localStorage.removeItem(dataKey);
+        safeStorageRemove(dataKey);
       }
     }
     const retryRes = await fetch(url, init);
     if (!retryRes.ok) throw new Error(`HTTP ${retryRes.status}`);
     const retryData = await retryRes.json();
     const retryEtag = retryRes.headers.get('ETag');
-    if (retryEtag) localStorage.setItem(etagKey, retryEtag);
-    localStorage.setItem(dataKey, JSON.stringify(retryData));
+    persistAdminCache(cacheKey, dataKey, etagKey, adminQuery, retryEtag, retryData);
     logAdminDebug('fetchAdminJsonCached:304-retry', { cacheKey, etag: retryEtag || '' });
     return { data: retryData, fromCache: false };
   }
@@ -116,8 +180,7 @@ async function fetchAdminJsonCached(cacheKey, url, init = {}) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   const etag = res.headers.get('ETag');
-  if (etag) localStorage.setItem(etagKey, etag);
-  localStorage.setItem(dataKey, JSON.stringify(data));
+  persistAdminCache(cacheKey, dataKey, etagKey, adminQuery, etag, data);
   logAdminDebug('fetchAdminJsonCached:200', { cacheKey, etag: etag || '' });
   return { data, fromCache: false };
 }
