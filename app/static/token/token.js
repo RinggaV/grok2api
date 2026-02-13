@@ -395,7 +395,11 @@ async function cancelActiveRefreshJob() {
   try {
     const res = await fetch(`/api/v1/admin/jobs/${encodeURIComponent(current.jobId)}/cancel`, {
       method: 'POST',
-      headers: buildAuthHeaders(apiKey),
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildAuthHeaders(apiKey),
+      },
+      body: JSON.stringify({ purge: true }),
       signal: timed.signal,
     });
     const payload = await parseJsonSafely(res);
@@ -405,6 +409,15 @@ async function cancelActiveRefreshJob() {
     }
     if (!res.ok) {
       showToast(extractApiErrorMessage(payload, '取消任务失败'), 'error');
+      return;
+    }
+    const deleted = Boolean(payload?.deleted);
+    if (deleted) {
+      stopRefreshJobPolling();
+      clearActiveRefreshJob();
+      resetRefreshJobUi();
+      if (hasTokenDom()) loadData();
+      showToast('任务已取消并清理', 'success');
       return;
     }
     showToast('已发送取消请求', 'info');

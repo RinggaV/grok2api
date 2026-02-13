@@ -219,6 +219,14 @@ export async function requestCancelAdminJob(db: Env["DB"], jobId: string): Promi
   return Boolean(job?.cancel_requested);
 }
 
+export async function deleteAdminJob(db: Env["DB"], jobId: string): Promise<boolean> {
+  await ensureAdminJobsTable(db);
+  const existing = await getAdminJob(db, jobId);
+  if (!existing) return false;
+  await dbRun(db, "DELETE FROM admin_jobs WHERE job_id = ?", [jobId]);
+  return true;
+}
+
 export async function cleanupAdminJobsByStatus(db: Env["DB"], statuses: AdminJobStatus[]): Promise<number> {
   await ensureAdminJobsTable(db);
   const deduped = Array.from(new Set((statuses || []).filter(Boolean)));
