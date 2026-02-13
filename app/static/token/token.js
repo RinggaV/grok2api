@@ -274,9 +274,11 @@ function cleanup() {
 
 function registerPage() {
   const registry = window.__pageRegistry || (window.__pageRegistry = {});
+  const pageInit = init;
+  const pageCleanup = cleanup;
   registry.token = {
-    init: () => init(),
-    cleanup: () => cleanup(),
+    init: pageInit,
+    cleanup: pageCleanup,
   };
 }
 

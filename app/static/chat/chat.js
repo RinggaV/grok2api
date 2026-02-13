@@ -1356,8 +1356,9 @@ async function streamVideo(body, bubbleEl) {
 
 if (window.__CHAT_ADMIN__) {
   const registry = window.__pageRegistry || (window.__pageRegistry = {});
+  const pageInit = init;
   registry.chat = {
-    init: () => init(),
+    init: pageInit,
     cleanup: null,
   };
 } else if (document.readyState === 'loading') {

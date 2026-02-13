@@ -399,8 +399,9 @@ async function copyToClipboard(text, btn) {
 
 function registerPage() {
   const registry = window.__pageRegistry || (window.__pageRegistry = {});
+  const pageInit = init;
   registry.config = {
-    init: () => init(),
+    init: pageInit,
     cleanup: null,
   };
 }

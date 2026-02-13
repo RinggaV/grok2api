@@ -531,8 +531,9 @@ async function init() {
 
 function registerPage() {
   const registry = window.__pageRegistry || (window.__pageRegistry = {});
+  const pageInit = init;
   registry.keys = {
-    init: () => init(),
+    init: pageInit,
     cleanup: null,
   };
 }
