@@ -153,7 +153,7 @@ export function buildConversationPayload(args: {
         temporary: true,
         modelName: "grok-3",
         message: prompt,
-        ...(enableNsfw ? { enableNsfw: true, enable_nsfw: true } : {}),
+        ...(enableNsfw ? { enable_nsfw: true } : {}),
         toolOverrides: { videoGen: true },
         enableSideBySide: true,
         responseMetadata: {
@@ -204,7 +204,7 @@ export function buildConversationPayload(args: {
       forceSideBySide: false,
       modelMode: mode,
       isAsyncChat: false,
-      ...(enableNsfw ? { enableNsfw: true, enable_nsfw: true } : {}),
+      ...(enableNsfw ? { enable_nsfw: true } : {}),
     },
   };
 }
