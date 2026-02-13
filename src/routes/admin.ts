@@ -76,6 +76,299 @@ function normalizeSsoToken(raw: string): string {
   return t.startsWith("sso=") ? t.slice(4).trim() : t;
 }
 
+const NSFW_BIRTH_DATE_API = "https://grok.com/rest/auth/set-birth-date";
+const NSFW_GRPC_API = "https://grok.com/auth_mgmt.AuthManagement/UpdateUserFeatureControls";
+const NSFW_DEFAULT_CONCURRENCY = 10;
+const NSFW_DEFAULT_RETRIES = 3;
+const NSFW_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+
+function parsePositiveInt(value: unknown, fallback: number, min = 1, max = 100): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  const v = Math.floor(n);
+  if (v < min) return min;
+  if (v > max) return max;
+  return v;
+}
+
+function parseOptionalBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const s = value.trim().toLowerCase();
+    if (!s) return fallback;
+    if (["1", "true", "yes", "on"].includes(s)) return true;
+    if (["0", "false", "no", "off"].includes(s)) return false;
+  }
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+  }
+  return fallback;
+}
+
+async function mapLimit<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  const max = Math.max(1, Math.min(limit, items.length || 1));
+  let cursor = 0;
+  const runners = Array.from({ length: max }, async () => {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= items.length) return;
+      await worker(items[idx] as T);
+    }
+  });
+  await Promise.all(runners);
+}
+
+function buildSsoCookie(sso: string, cfCookie: string): string {
+  const base = `sso-rw=${sso};sso=${sso}`;
+  if (!cfCookie) return base;
+  return `${base};${cfCookie}`;
+}
+
+function randomBirthDateIso(): string {
+  const now = new Date();
+  const years = 20 + Math.floor(Math.random() * 21); // 20-40
+  const y = now.getUTCFullYear() - years;
+  const m = 1 + Math.floor(Math.random() * 12);
+  const d = 1 + Math.floor(Math.random() * 28);
+  const hh = Math.floor(Math.random() * 24);
+  const mm = Math.floor(Math.random() * 60);
+  const ss = Math.floor(Math.random() * 60);
+  const ms = Math.floor(Math.random() * 1000);
+  const date = new Date(Date.UTC(y, m - 1, d, hh, mm, ss, ms));
+  return date.toISOString();
+}
+
+function encodeGrpcWebPayload(message: Uint8Array): Uint8Array {
+  const frame = new Uint8Array(1 + 4 + message.length);
+  frame[0] = 0x00;
+  frame[1] = (message.length >>> 24) & 0xff;
+  frame[2] = (message.length >>> 16) & 0xff;
+  frame[3] = (message.length >>> 8) & 0xff;
+  frame[4] = message.length & 0xff;
+  frame.set(message, 5);
+  return frame;
+}
+
+function buildEnableNsfwPayload(): Uint8Array {
+  const key = new TextEncoder().encode("always_show_nsfw_content");
+  const inner = new Uint8Array(2 + key.length);
+  inner[0] = 0x0a;
+  inner[1] = key.length;
+  inner.set(key, 2);
+
+  const message = new Uint8Array(6 + inner.length);
+  message[0] = 0x0a;
+  message[1] = 0x02;
+  message[2] = 0x10;
+  message[3] = 0x01;
+  message[4] = 0x12;
+  message[5] = inner.length;
+  message.set(inner, 6);
+  return encodeGrpcWebPayload(message);
+}
+
+function maybeDecodeGrpcWebText(bytes: Uint8Array, contentType: string): Uint8Array {
+  if (!/grpc-web-text/i.test(contentType)) return bytes;
+  try {
+    const raw = new TextDecoder().decode(bytes).replace(/\s+/g, "");
+    const decoded = atob(raw);
+    const out = new Uint8Array(decoded.length);
+    for (let i = 0; i < decoded.length; i++) out[i] = decoded.charCodeAt(i) & 0xff;
+    return out;
+  } catch {
+    return bytes;
+  }
+}
+
+function parseGrpcWebStatus(
+  bodyBytes: Uint8Array,
+  contentType: string,
+  headers: Headers,
+): { code: number; message: string } {
+  const trailers: Record<string, string> = {};
+  const bytes = maybeDecodeGrpcWebText(bodyBytes, contentType || "");
+  let i = 0;
+  while (i + 5 <= bytes.length) {
+    const flag = bytes[i]!;
+    const len =
+      ((bytes[i + 1] ?? 0) << 24) |
+      ((bytes[i + 2] ?? 0) << 16) |
+      ((bytes[i + 3] ?? 0) << 8) |
+      (bytes[i + 4] ?? 0);
+    i += 5;
+    if (len < 0 || i + len > bytes.length) break;
+    const payload = bytes.slice(i, i + len);
+    i += len;
+    if ((flag & 0x80) !== 0) {
+      const text = new TextDecoder().decode(payload);
+      const lines = text.split(/\r\n|\n/).filter(Boolean);
+      for (const line of lines) {
+        const p = line.indexOf(":");
+        if (p <= 0) continue;
+        const k = line.slice(0, p).trim().toLowerCase();
+        const v = line.slice(p + 1).trim();
+        trailers[k] = v;
+      }
+    }
+  }
+
+  const headerCode = headers.get("grpc-status");
+  const headerMsg = headers.get("grpc-message");
+  if (headerCode && !trailers["grpc-status"]) trailers["grpc-status"] = headerCode;
+  if (headerMsg && !trailers["grpc-message"]) trailers["grpc-message"] = headerMsg;
+
+  const codeRaw = String(trailers["grpc-status"] ?? "").trim();
+  const code = Number.isFinite(Number(codeRaw)) ? Number(codeRaw) : -1;
+  const rawMsg = String(trailers["grpc-message"] ?? "").trim() || "";
+  let message = rawMsg;
+  try {
+    message = decodeURIComponent(rawMsg);
+  } catch {
+    // keep raw trailer value
+  }
+  return { code, message };
+}
+
+async function setBirthDateForToken(token: string, cfCookie: string): Promise<{ ok: boolean; status: number; error: string }> {
+  const cookie = buildSsoCookie(token, cfCookie);
+  try {
+    const res = await fetch(NSFW_BIRTH_DATE_API, {
+      method: "POST",
+      headers: {
+        Accept: "*/*",
+        "Content-Type": "application/json",
+        Origin: "https://grok.com",
+        Referer: "https://grok.com/?_s=account",
+        "User-Agent": NSFW_USER_AGENT,
+        Cookie: cookie,
+      },
+      body: JSON.stringify({ birthDate: randomBirthDateIso() }),
+    });
+    if (res.status === 200 || res.status === 204) {
+      return { ok: true, status: res.status, error: "" };
+    }
+    return { ok: false, status: res.status, error: `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function setNsfwForToken(
+  token: string,
+  cfCookie: string,
+): Promise<{ ok: boolean; status: number; grpcStatus: number; error: string }> {
+  const cookie = buildSsoCookie(token, cfCookie);
+  const payload = buildEnableNsfwPayload();
+  try {
+    const res = await fetch(NSFW_GRPC_API, {
+      method: "POST",
+      headers: {
+        Accept: "*/*",
+        "Content-Type": "application/grpc-web+proto",
+        Origin: "https://grok.com",
+        Referer: "https://grok.com/",
+        "User-Agent": NSFW_USER_AGENT,
+        "x-grpc-web": "1",
+        "x-user-agent": "connect-es/2.1.1",
+        Cookie: cookie,
+      },
+      body: payload,
+    });
+    if (res.status !== 200) {
+      return { ok: false, status: res.status, grpcStatus: -1, error: `HTTP ${res.status}` };
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const grpc = parseGrpcWebStatus(bytes, res.headers.get("content-type") || "", res.headers);
+    const ok = grpc.code === -1 || grpc.code === 0;
+    return {
+      ok,
+      status: res.status,
+      grpcStatus: grpc.code,
+      error: ok ? "" : (grpc.message || `gRPC ${grpc.code}`),
+    };
+  } catch (e) {
+    return { ok: false, status: 0, grpcStatus: -1, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function resolveTokensForRefresh(c: any, body: any, allowAll: boolean): Promise<string[]> {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  if (allowAll && body && typeof body === "object" && Boolean(body.all)) {
+    const rows = await dbAll<{ token: string }>(c.env.DB, "SELECT token FROM tokens");
+    for (const row of rows) {
+      const token = normalizeSsoToken(String(row.token || ""));
+      if (!token || seen.has(token)) continue;
+      seen.add(token);
+      out.push(token);
+    }
+    return out;
+  }
+
+  const candidates: string[] = [];
+  if (body && typeof body === "object") {
+    if (typeof body.token === "string") candidates.push(body.token);
+    if (Array.isArray(body.tokens)) candidates.push(...body.tokens.filter((x: unknown) => typeof x === "string") as string[]);
+  }
+  for (const raw of candidates) {
+    const token = normalizeSsoToken(String(raw || ""));
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+    out.push(token);
+  }
+  return out;
+}
+
+async function refreshTokenLimitsByList(c: any, tokens: string[]): Promise<{ results: Record<string, boolean> }> {
+  const unique = [...new Set(tokens.map((t) => normalizeSsoToken(t)).filter(Boolean))];
+  const settings = await getSettings(c.env);
+  const cf = normalizeCfCookie(settings.grok.cf_clearance ?? "");
+  const placeholders = unique.map(() => "?").join(",");
+  const typeRows = placeholders
+    ? await dbAll<{ token: string; token_type: string }>(
+        c.env.DB,
+        `SELECT token, token_type FROM tokens WHERE token IN (${placeholders})`,
+        unique,
+      )
+    : [];
+  const tokenTypeByToken = new Map(typeRows.map((r) => [r.token, r.token_type]));
+
+  const results: Record<string, boolean> = {};
+  for (const t of unique) {
+    try {
+      const cookie = buildSsoCookie(t, cf);
+      const tokenType = tokenTypeByToken.get(t) ?? "sso";
+      const r = await checkRateLimits(cookie, settings.grok, "grok-4-fast");
+      const remaining = (r as any)?.remainingTokens;
+      let heavyRemaining: number | null = null;
+      if (tokenType === "ssoSuper") {
+        const rh = await checkRateLimits(cookie, settings.grok, "grok-4-heavy");
+        const hv = (rh as any)?.remainingTokens;
+        if (typeof hv === "number") heavyRemaining = hv;
+      }
+      if (typeof remaining === "number") {
+        await updateTokenLimits(c.env.DB, t, {
+          remaining_queries: remaining,
+          ...(heavyRemaining !== null ? { heavy_remaining_queries: heavyRemaining } : {}),
+        });
+        results[`sso=${t}`] = true;
+      } else {
+        results[`sso=${t}`] = false;
+      }
+    } catch {
+      results[`sso=${t}`] = false;
+    }
+    await new Promise((res) => setTimeout(res, 50));
+  }
+  return { results };
+}
+
 async function clearKvCacheByType(
   env: Env,
   type: CacheType | null,
@@ -706,58 +999,80 @@ adminRoutes.post("/api/v1/admin/tokens", requireAdminAuth, async (c) => {
 adminRoutes.post("/api/v1/admin/tokens/refresh", requireAdminAuth, async (c) => {
   try {
     const body = (await c.req.json()) as any;
-    const tokens: string[] = [];
-    if (body && typeof body === "object") {
-      if (typeof body.token === "string") tokens.push(body.token);
-      if (Array.isArray(body.tokens)) tokens.push(...body.tokens.filter((x: any) => typeof x === "string"));
-    }
-    const unique = [...new Set(tokens.map((t) => normalizeSsoToken(t)).filter(Boolean))];
+    const unique = await resolveTokensForRefresh(c, body, false);
     if (!unique.length) return c.json(legacyErr("No tokens provided"), 400);
-
-    const settings = await getSettings(c.env);
-    const cf = normalizeCfCookie(settings.grok.cf_clearance ?? "");
-
-    const placeholders = unique.map(() => "?").join(",");
-    const typeRows = placeholders
-      ? await dbAll<{ token: string; token_type: string }>(
-          c.env.DB,
-          `SELECT token, token_type FROM tokens WHERE token IN (${placeholders})`,
-          unique,
-        )
-      : [];
-    const tokenTypeByToken = new Map(typeRows.map((r) => [r.token, r.token_type]));
-
-    const results: Record<string, boolean> = {};
-    for (const t of unique) {
-      try {
-        const cookie = cf ? `sso-rw=${t};sso=${t};${cf}` : `sso-rw=${t};sso=${t}`;
-        const tokenType = tokenTypeByToken.get(t) ?? "sso";
-        const r = await checkRateLimits(cookie, settings.grok, "grok-4-fast");
-        const remaining = (r as any)?.remainingTokens;
-        let heavyRemaining: number | null = null;
-        if (tokenType === "ssoSuper") {
-          const rh = await checkRateLimits(cookie, settings.grok, "grok-4-heavy");
-          const hv = (rh as any)?.remainingTokens;
-          if (typeof hv === "number") heavyRemaining = hv;
-        }
-        if (typeof remaining === "number") {
-          await updateTokenLimits(c.env.DB, t, {
-            remaining_queries: remaining,
-            ...(heavyRemaining !== null ? { heavy_remaining_queries: heavyRemaining } : {}),
-          });
-          results[`sso=${t}`] = true;
-        } else {
-          results[`sso=${t}`] = false;
-        }
-      } catch {
-        results[`sso=${t}`] = false;
-      }
-      await new Promise((res) => setTimeout(res, 50));
-    }
-
-    return c.json(legacyOk({ results }));
+    const refreshed = await refreshTokenLimitsByList(c, unique);
+    return c.json(legacyOk({ results: refreshed.results }));
   } catch (e) {
     return c.json(legacyErr(`Refresh failed: ${e instanceof Error ? e.message : String(e)}`), 500);
+  }
+});
+
+adminRoutes.post("/api/v1/admin/tokens/nsfw/refresh", requireAdminAuth, async (c) => {
+  try {
+    const body = (await c.req.json()) as any;
+    const unique = await resolveTokensForRefresh(c, body, true);
+    if (!unique.length) return c.json(legacyErr("No tokens provided"), 400);
+    const settings = await getSettings(c.env);
+    const cf = normalizeCfCookie(settings.grok.cf_clearance ?? "");
+    const enableNsfw = parseOptionalBoolean(body?.enable_nsfw, true);
+    const retries = parsePositiveInt(body?.retries, NSFW_DEFAULT_RETRIES, 0, 10);
+    const concurrency = parsePositiveInt(body?.concurrency, NSFW_DEFAULT_CONCURRENCY, 1, 50);
+
+    const results: Record<string, boolean> = {};
+    const failedItems: Array<Record<string, unknown>> = [];
+
+    await mapLimit(unique, concurrency, async (token) => {
+      let lastStep = "unknown";
+      let lastError = "unknown";
+      const attempts = retries + 1;
+      for (let i = 1; i <= attempts; i++) {
+        const birth = await setBirthDateForToken(token, cf);
+        if (!birth.ok) {
+          lastStep = "birth";
+          lastError = birth.error || `HTTP ${birth.status}`;
+          continue;
+        }
+        if (!enableNsfw) {
+          results[`sso=${token}`] = true;
+          return;
+        }
+        const nsfw = await setNsfwForToken(token, cf);
+        if (nsfw.ok) {
+          results[`sso=${token}`] = true;
+          return;
+        }
+        lastStep = "nsfw";
+        lastError = nsfw.error || `HTTP ${nsfw.status}`;
+      }
+      results[`sso=${token}`] = false;
+      failedItems.push({
+        token,
+        step: lastStep,
+        error: lastError,
+        attempts,
+        invalidated: false,
+      });
+    });
+
+    const values = Object.values(results);
+    const success = values.filter(Boolean).length;
+    const failed = values.length - success;
+    return c.json(
+      legacyOk({
+        summary: {
+          total: values.length,
+          success,
+          failed,
+          invalidated: 0,
+        },
+        results,
+        failed: failedItems,
+        enable_nsfw: enableNsfw,
+      }),
+    );
+  } catch (e) {
+    return c.json(legacyErr(`NSFW refresh failed: ${e instanceof Error ? e.message : String(e)}`), 500);
   }
 });
 
