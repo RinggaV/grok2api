@@ -14,6 +14,15 @@ var autoRegisterLastAdded = 0;
 var liveStatsTimer = null;
 var isWorkersRuntime = false;
 var isNsfwRefreshAllRunning = false;
+var isLoadDataRunning = false;
+var pendingLoadData = false;
+var isStatsRefreshRunning = false;
+var loadDataSeq = 0;
+
+const TOKEN_LOAD_TIMEOUT_MS = 20000;
+const TOKEN_REFRESH_TIMEOUT_MS = 30000;
+const TOKEN_STATS_TIMEOUT_MS = 12000;
+const LIVE_STATS_INTERVAL_MS = 10000;
 
 var displayTokens = [];
 var filterState = {
@@ -28,6 +37,29 @@ function logAdminDebug(...args) {
   if (typeof window.adminDebug === 'function') {
     window.adminDebug(...args);
   }
+}
+
+function hasTokenDom() {
+  return Boolean(document.getElementById('token-table-body'));
+}
+
+function withTimeoutSignal(timeoutMs) {
+  const ms = Math.max(1000, Number(timeoutMs) || 5000);
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), ms);
+  return {
+    signal: controller.signal,
+    done() {
+      window.clearTimeout(timer);
+    },
+  };
+}
+
+function normalizeRequestErrorMessage(err, fallback) {
+  const msg = String(err?.message || '').trim();
+  if (!msg) return fallback;
+  if (msg.includes('aborted') || msg.includes('超时')) return '请求超时，请稍后重试';
+  return msg;
 }
 
 function normalizeSsoToken(token) {
@@ -242,8 +274,7 @@ if (document.readyState === 'loading') {
 
 async function init() {
   logAdminDebug('token:init:start');
-  const guardEl = document.getElementById('token-table-body');
-  if (!guardEl) {
+  if (!hasTokenDom()) {
     logAdminDebug('token:init:skip-no-dom');
     return;
   }
@@ -263,7 +294,7 @@ function startLiveStats() {
   // Keep stats fresh (use_count / quota changes) without disrupting table interactions.
   liveStatsTimer = setInterval(() => {
     refreshStatsOnly();
-  }, 5000);
+  }, LIVE_STATS_INTERVAL_MS);
 }
 
 function cleanup() {
@@ -285,9 +316,13 @@ function registerPage() {
 registerPage();
 
 async function refreshStatsOnly() {
+  if (isStatsRefreshRunning) return;
+  isStatsRefreshRunning = true;
+  const timed = withTimeoutSignal(TOKEN_STATS_TIMEOUT_MS);
   try {
     const res = await fetch('/api/v1/admin/tokens', {
-      headers: buildAuthHeaders(apiKey)
+      headers: buildAuthHeaders(apiKey),
+      signal: timed.signal,
     });
     if (res.status === 401) {
       logout();
@@ -342,15 +377,31 @@ async function refreshStatsOnly() {
   } catch (e) {
     logAdminDebug('token:refreshStatsOnly:error', { message: e?.message || String(e) });
     // Silent by design; do not spam toasts.
+  } finally {
+    timed.done();
+    isStatsRefreshRunning = false;
   }
 }
 
 async function loadData() {
+  if (isLoadDataRunning) {
+    pendingLoadData = true;
+    return;
+  }
+  isLoadDataRunning = true;
+  const requestSeq = ++loadDataSeq;
+  const timed = withTimeoutSignal(TOKEN_LOAD_TIMEOUT_MS);
   try {
     logAdminDebug('token:loadData:start');
     const { data, fromCache } = await fetchAdminJsonCached('tokens', '/api/v1/admin/tokens', {
-      headers: buildAuthHeaders(apiKey)
+      headers: buildAuthHeaders(apiKey),
+      signal: timed.signal,
     });
+    if (requestSeq !== loadDataSeq) return;
+    if (!hasTokenDom()) {
+      logAdminDebug('token:loadData:skip-no-dom');
+      return;
+    }
     allTokens = data || {};
     processTokens(allTokens);
     updateStats(allTokens);
@@ -364,7 +415,15 @@ async function loadData() {
   } catch (e) {
     if (String(e?.message || '').includes('401')) logout();
     logAdminDebug('token:loadData:error', { message: e?.message || String(e) });
-    showToast('加载失败: ' + e.message, 'error');
+    if (!hasTokenDom()) return;
+    showToast('加载失败: ' + normalizeRequestErrorMessage(e, '请求失败'), 'error');
+  } finally {
+    timed.done();
+    isLoadDataRunning = false;
+    if (pendingLoadData) {
+      pendingLoadData = false;
+      setTimeout(() => loadData(), 60);
+    }
   }
 }
 
@@ -566,8 +625,13 @@ function updateSelectionState() {
   const allSelected = displayTokens.length > 0 && displayTokens.every((t) => t._selected);
 
   const selectAll = document.getElementById('select-all');
+  const selectedCountEl = document.getElementById('selected-count');
   if (selectAll) selectAll.checked = allSelected;
-  document.getElementById('selected-count').innerText = selectedCount;
+  if (selectedCountEl) {
+    selectedCountEl.innerText = String(selectedCount);
+  } else {
+    logAdminDebug('token:updateSelectionState:missing-selected-count');
+  }
   setActionButtonsState();
 }
 
@@ -1156,6 +1220,7 @@ async function copyToClipboard(text, btn) {
 }
 
 async function refreshStatus(token, btnEl) {
+  const timed = withTimeoutSignal(TOKEN_REFRESH_TIMEOUT_MS);
   try {
     const btn = btnEl || null;
     if (btn) {
@@ -1169,7 +1234,8 @@ async function refreshStatus(token, btnEl) {
         'Content-Type': 'application/json',
         ...buildAuthHeaders(apiKey)
       },
-      body: JSON.stringify({ token: normalized })
+      body: JSON.stringify({ token: normalized }),
+      signal: timed.signal,
     });
 
     const data = await parseJsonSafely(res);
@@ -1189,7 +1255,9 @@ async function refreshStatus(token, btnEl) {
     }
   } catch (e) {
     console.error(e);
-    showToast(e?.message ? `请求错误: ${e.message}` : '请求错误', 'error');
+    showToast(`请求错误: ${normalizeRequestErrorMessage(e, '请求失败')}`, 'error');
+  } finally {
+    timed.done();
   }
 }
 
@@ -1213,6 +1281,7 @@ async function refreshAllNsfw() {
     btn.innerHTML = '刷新中...';
   }
 
+  const timed = withTimeoutSignal(TOKEN_REFRESH_TIMEOUT_MS);
   try {
     const res = await fetch('/api/v1/admin/tokens/nsfw/refresh', {
       method: 'POST',
@@ -1220,7 +1289,8 @@ async function refreshAllNsfw() {
         'Content-Type': 'application/json',
         ...buildAuthHeaders(apiKey)
       },
-      body: JSON.stringify({ all: true })
+      body: JSON.stringify({ all: true }),
+      signal: timed.signal,
     });
 
     const payload = await parseJsonSafely(res);
@@ -1240,8 +1310,9 @@ async function refreshAllNsfw() {
     );
     loadData();
   } catch (e) {
-    showToast(e?.message ? `NSFW 刷新失败: ${e.message}` : 'NSFW 刷新失败', 'error');
+    showToast(`NSFW 刷新失败: ${normalizeRequestErrorMessage(e, '请求失败')}`, 'error');
   } finally {
+    timed.done();
     isNsfwRefreshAllRunning = false;
     if (btn) {
       btn.disabled = false;
@@ -1283,6 +1354,7 @@ async function processBatchQueue() {
 
   // Take chunk
   const chunk = batchQueue.splice(0, BATCH_SIZE);
+  const timed = withTimeoutSignal(TOKEN_REFRESH_TIMEOUT_MS);
 
   try {
     const res = await fetch('/api/v1/admin/tokens/refresh', {
@@ -1291,7 +1363,8 @@ async function processBatchQueue() {
         'Content-Type': 'application/json',
         ...buildAuthHeaders(apiKey)
       },
-      body: JSON.stringify({ tokens: chunk })
+      body: JSON.stringify({ tokens: chunk }),
+      signal: timed.signal,
     });
 
     if (res.ok) {
@@ -1302,8 +1375,10 @@ async function processBatchQueue() {
       batchProcessed += chunk.length;
     }
   } catch (e) {
-    showToast('网络请求错误', 'error');
+    showToast(`网络请求错误: ${normalizeRequestErrorMessage(e, '请求失败')}`, 'error');
     batchProcessed += chunk.length;
+  } finally {
+    timed.done();
   }
   updateBatchProgress();
 
@@ -1312,7 +1387,7 @@ async function processBatchQueue() {
   if (!isBatchProcessing || isBatchPaused) return;
   setTimeout(() => {
     processBatchQueue();
-  }, 400);
+  }, 80);
 }
 
 function toggleBatchPause() {

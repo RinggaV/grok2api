@@ -29,6 +29,10 @@ function getUserApiKey() {
   return String(q('api-key-input').value || '').trim();
 }
 
+function isRawResponseMode() {
+  return Boolean(q('raw-response-toggle')?.checked);
+}
+
 function buildApiHeaders() {
   const k = getUserApiKey();
   return k ? { Authorization: `Bearer ${k}` } : {};
@@ -299,14 +303,23 @@ function enhanceMessageMedia(container) {
   });
 }
 
+function renderRawText(container, text) {
+  const pre = document.createElement('pre');
+  pre.textContent = text;
+  container.appendChild(pre);
+}
+
 function renderContent(container, content, forceText) {
   container.innerHTML = '';
-  let text = String(content || '');
+  const rawText = String(content || '');
+  const isAssistant = container.closest('.msg')?.classList.contains('msg-assistant');
+  if (isAssistant) {
+    container.dataset.rawContent = rawText;
+  }
+  let text = rawText;
 
-  if (forceText) {
-    const pre = document.createElement('pre');
-    pre.textContent = text;
-    container.appendChild(pre);
+  if (forceText || (isAssistant && isRawResponseMode())) {
+    renderRawText(container, text);
     return;
   }
 
@@ -321,6 +334,17 @@ function renderContent(container, content, forceText) {
   }
   container.innerHTML = html;
   enhanceMessageMedia(container);
+}
+
+function rerenderAssistantMessages() {
+  const bubbles = Array.from(document.querySelectorAll('#chat-messages .msg-assistant .msg-bubble'));
+  bubbles.forEach((bubble) => {
+    const raw = String(bubble.dataset.rawContent || bubble.textContent || '');
+    renderContent(bubble, raw, false);
+  });
+  if (!isRawResponseMode()) {
+    setThinkBlocksOpen(Boolean(q('think-toggle')?.checked));
+  }
 }
 
 function setThinkBlocksOpen(open) {
@@ -356,6 +380,9 @@ async function init() {
   q('think-toggle')?.addEventListener('change', () => {
     const open = Boolean(q('think-toggle')?.checked);
     setThinkBlocksOpen(open);
+  });
+  q('raw-response-toggle')?.addEventListener('change', () => {
+    rerenderAssistantMessages();
   });
   q('image-run-mode')?.addEventListener('change', () => {
     if (getImageRunMode() !== 'continuous') {
