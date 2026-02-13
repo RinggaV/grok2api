@@ -92,6 +92,7 @@ const NSFW_GRPC_API = "https://grok.com/auth_mgmt.AuthManagement/UpdateUserFeatu
 const NSFW_DEFAULT_CONCURRENCY = 10;
 const NSFW_DEFAULT_RETRIES = 3;
 const NSFW_REQUEST_TIMEOUT_MS = 25_000;
+const SQL_IN_QUERY_CHUNK_SIZE = 300;
 const ADMIN_JOB_CLEANUP_STATUSES = new Set(["failed", "cancelled", "completed"]);
 const ADMIN_JOB_STALE_CLEANUP_STATUSES = new Set(["queued", "running"]);
 const NSFW_USER_AGENT =
@@ -366,19 +367,28 @@ async function resolveTokensForRefresh(c: any, body: any, allowAll: boolean): Pr
   return out;
 }
 
+async function getTokenTypeMapByTokens(db: Env["DB"], tokens: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const unique = [...new Set(tokens.map((t) => normalizeSsoToken(t)).filter(Boolean))];
+  if (!unique.length) return out;
+  for (let i = 0; i < unique.length; i += SQL_IN_QUERY_CHUNK_SIZE) {
+    const chunk = unique.slice(i, i + SQL_IN_QUERY_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = await dbAll<{ token: string; token_type: string }>(
+      db,
+      `SELECT token, token_type FROM tokens WHERE token IN (${placeholders})`,
+      chunk,
+    );
+    for (const row of rows) out.set(row.token, row.token_type);
+  }
+  return out;
+}
+
 async function refreshTokenLimitsByList(c: any, tokens: string[]): Promise<{ results: Record<string, boolean> }> {
   const unique = [...new Set(tokens.map((t) => normalizeSsoToken(t)).filter(Boolean))];
   const settings = await getSettings(c.env);
   const cf = normalizeCfCookie(settings.grok.cf_clearance ?? "");
-  const placeholders = unique.map(() => "?").join(",");
-  const typeRows = placeholders
-    ? await dbAll<{ token: string; token_type: string }>(
-        c.env.DB,
-        `SELECT token, token_type FROM tokens WHERE token IN (${placeholders})`,
-        unique,
-      )
-    : [];
-  const tokenTypeByToken = new Map(typeRows.map((r) => [r.token, r.token_type]));
+  const tokenTypeByToken = await getTokenTypeMapByTokens(c.env.DB, unique);
 
   const results: Record<string, boolean> = {};
   for (const t of unique) {
@@ -466,15 +476,7 @@ async function runTokenRefreshJob(c: any, jobId: string, tokens: string[]): Prom
   try {
     const settings = await getSettings(c.env);
     const cf = normalizeCfCookie(settings.grok.cf_clearance ?? "");
-    const placeholders = unique.map(() => "?").join(",");
-    const typeRows = placeholders
-      ? await dbAll<{ token: string; token_type: string }>(
-          c.env.DB,
-          `SELECT token, token_type FROM tokens WHERE token IN (${placeholders})`,
-          unique,
-        )
-      : [];
-    const tokenTypeByToken = new Map(typeRows.map((r) => [r.token, r.token_type]));
+    const tokenTypeByToken = await getTokenTypeMapByTokens(c.env.DB, unique);
 
     for (let i = 0; i < unique.length; i++) {
       const token = unique[i]!;
