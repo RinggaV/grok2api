@@ -88,6 +88,52 @@ function summarizeTokenRefreshResults(payload, fallbackTotal) {
   };
 }
 
+function summarizeFailedItems(payload, maxItems = 3) {
+  const failed = Array.isArray(payload?.failed) ? payload.failed : [];
+  if (!failed.length) return '';
+  const lines = failed.slice(0, Math.max(1, maxItems)).map((it) => {
+    const token = String(it?.token || '').trim();
+    const shortToken = token.length > 12 ? `${token.slice(0, 4)}...${token.slice(-4)}` : token || '-';
+    const step = String(it?.step || 'unknown');
+    const error = String(it?.error || '').trim() || '-';
+    return `${shortToken} [${step}] ${error}`;
+  });
+  const more = failed.length > lines.length ? ` 等 ${failed.length} 条` : '';
+  return `${lines.join(' | ')}${more}`;
+}
+
+function createNsfwProgressController(btn, originalText, estimatedTotal) {
+  let stage = '请求中';
+  const startedAt = Date.now();
+  const total = Math.max(0, Number(estimatedTotal) || 0);
+  const update = () => {
+    if (!btn) return;
+    const sec = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    const totalText = total > 0 ? ` / 约${total}个` : '';
+    btn.innerHTML = `${stage} (${sec}s${totalText})`;
+  };
+  update();
+  const timer = setInterval(update, 500);
+  return {
+    setStage(next) {
+      stage = String(next || stage);
+      update();
+    },
+    stop() {
+      clearInterval(timer);
+      if (btn) btn.innerHTML = originalText || '一键刷新 NSFW';
+    },
+  };
+}
+
+function logNsfwDebug(event, data) {
+  logAdminDebug(`token:nsfw:${event}`, data || {});
+  try {
+    if (data !== undefined) console.info(`[NSFW] ${event}`, data);
+    else console.info(`[NSFW] ${event}`);
+  } catch (e) {}
+}
+
 function normalizeSsoToken(token) {
   const v = String(token || '').trim();
   return v.startsWith('sso=') ? v.slice(4).trim() : v;
@@ -1301,15 +1347,18 @@ async function refreshAllNsfw() {
 
   const btn = document.getElementById('btn-refresh-nsfw-all');
   const originalText = btn ? btn.innerHTML : '';
+  const estimatedTotal = collectKnownTokenValues().length;
   isNsfwRefreshAllRunning = true;
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = '刷新中...';
   }
+  const progress = createNsfwProgressController(btn, originalText, estimatedTotal);
+  logNsfwDebug('start', { estimatedTotal });
 
   try {
     const timedPrimary = withTimeoutSignal(TOKEN_REFRESH_TIMEOUT_MS);
     let usedCompatFallback = false;
+    progress.setStage('执行 NSFW 刷新');
     let res = await fetch('/api/v1/admin/tokens/nsfw/refresh', {
       method: 'POST',
       headers: {
@@ -1322,8 +1371,10 @@ async function refreshAllNsfw() {
     timedPrimary.done();
 
     let payload = await parseJsonSafely(res);
+    logNsfwDebug('primary-response', { status: res.status, ok: res.ok, payload });
     if (res.status === 404 || res.status === 405) {
       usedCompatFallback = true;
+      progress.setStage('回退到配额刷新');
       let tokens = collectKnownTokenValues();
       if (!tokens.length) {
         await loadData();
@@ -1345,6 +1396,7 @@ async function refreshAllNsfw() {
       });
       timedFallback.done();
       payload = await parseJsonSafely(res);
+      logNsfwDebug('fallback-response', { status: res.status, ok: res.ok, payload });
       if (res.ok) {
         payload = {
           summary: summarizeTokenRefreshResults(payload || {}, tokens.length),
@@ -1353,7 +1405,12 @@ async function refreshAllNsfw() {
       }
     }
     if (!res.ok) {
+      const failedDetails = summarizeFailedItems(payload);
+      if (failedDetails) {
+        showToast(`失败详情: ${failedDetails}`, 'warning');
+      }
       showToast(extractApiErrorMessage(payload, 'NSFW 刷新失败'), 'error');
+      logNsfwDebug('failed', { status: res.status, payload });
       return;
     }
 
@@ -1366,18 +1423,24 @@ async function refreshAllNsfw() {
       `NSFW 刷新完成：总计 ${total}，成功 ${success}，失败 ${failed}，失效 ${invalidated}`,
       failed > 0 ? 'info' : 'success'
     );
+    const failedDetails = summarizeFailedItems(payload);
+    if (failedDetails) {
+      showToast(`失败详情: ${failedDetails}`, 'warning');
+    }
     if (usedCompatFallback) {
       showToast('当前部署未提供 NSFW 专用接口，已降级为 Token 配额刷新。', 'warning');
     }
+    logNsfwDebug('completed', { summary, usedCompatFallback, failed: payload?.failed || [] });
     loadData();
   } catch (e) {
     showToast(`NSFW 刷新失败: ${normalizeRequestErrorMessage(e, '请求失败')}`, 'error');
+    logNsfwDebug('exception', { message: e?.message || String(e), error: e });
   } finally {
     isNsfwRefreshAllRunning = false;
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = originalText || '一键刷新 NSFW';
     }
+    progress.stop();
   }
 }
 
