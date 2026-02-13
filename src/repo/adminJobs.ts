@@ -219,3 +219,18 @@ export async function requestCancelAdminJob(db: Env["DB"], jobId: string): Promi
   return Boolean(job?.cancel_requested);
 }
 
+export async function cleanupAdminJobsByStatus(db: Env["DB"], statuses: AdminJobStatus[]): Promise<number> {
+  await ensureAdminJobsTable(db);
+  const deduped = Array.from(new Set((statuses || []).filter(Boolean)));
+  if (!deduped.length) return 0;
+  const placeholders = deduped.map(() => "?").join(",");
+  const countRow = await dbFirst<{ total: number }>(
+    db,
+    `SELECT COUNT(1) AS total FROM admin_jobs WHERE status IN (${placeholders})`,
+    deduped,
+  );
+  const total = Number(countRow?.total || 0);
+  if (total <= 0) return 0;
+  await dbRun(db, `DELETE FROM admin_jobs WHERE status IN (${placeholders})`, deduped);
+  return total;
+}

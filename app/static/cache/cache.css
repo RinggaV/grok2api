@@ -360,3 +360,9 @@
     display: none;
   }
 }
+
+:root[data-theme="dark"] #batch-actions #batch-progress,
+:root[data-theme="dark"] #batch-actions #batch-progress-text,
+:root[data-theme="dark"] #batch-actions .batch-link {
+  color: var(--accents-4) !important;
+}

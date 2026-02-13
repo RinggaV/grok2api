@@ -22,14 +22,14 @@
 
 :root[data-theme="dark"] {
   --bg: #020617;
-  --fg: #e2e8f0;
+  --fg: #d1dae7;
   --accents-1: #0f172a;
   --accents-2: #334155;
   --accents-3: #475569;
-  --accents-4: #94a3b8;
-  --accents-5: #cbd5e1;
-  --accents-6: #e2e8f0;
-  --accents-7: #f8fafc;
+  --accents-4: #8fa1b8;
+  --accents-5: #b5c4d6;
+  --accents-6: #cad6e5;
+  --accents-7: #dbe6f2;
   --border: #334155;
   --success: #38bdf8;
   --error: #f87171;
@@ -56,6 +56,12 @@
 :root[data-theme="dark"] .text-gray-500,
 :root[data-theme="dark"] .text-gray-600 {
   color: var(--accents-4) !important;
+}
+
+:root[data-theme="dark"] .text-white,
+:root[data-theme="dark"] [class*=" text-white"],
+:root[data-theme="dark"] [class^="text-white"] {
+  color: #d5e1ef !important;
 }
 
 body {

@@ -23,6 +23,7 @@ var refreshJobPollTimer = null;
 var lastRefreshJobSnapshot = null;
 var refreshJobPollFailures = 0;
 var tokenVisibilityHookBound = false;
+var failedJobsCleanupDone = false;
 
 const TOKEN_LOAD_TIMEOUT_MS = 20000;
 const TOKEN_REFRESH_TIMEOUT_MS = 30000;
@@ -499,6 +500,52 @@ async function parseJsonSafely(response) {
   }
 }
 
+async function cleanupFailedJobs(options = {}) {
+  const silent = Boolean(options.silent);
+  const force = Boolean(options.force);
+  if (failedJobsCleanupDone && !force) return 0;
+  if (!apiKey) return 0;
+  const btn = document.getElementById('btn-cleanup-failed-jobs');
+  if (btn) btn.disabled = true;
+  const timed = withTimeoutSignal(10000);
+  try {
+    const res = await fetch('/api/v1/admin/jobs/cleanup', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildAuthHeaders(apiKey),
+      },
+      body: JSON.stringify({ statuses: ['failed'] }),
+      signal: timed.signal,
+    });
+    const payload = await parseJsonSafely(res);
+    if (res.status === 401) {
+      logout();
+      return 0;
+    }
+    if (!res.ok || payload?.status === 'error') {
+      const message = extractApiErrorMessage(payload, `HTTP ${res.status}`);
+      if (!silent) showToast(`清理失败任务失败: ${message}`, 'error');
+      return 0;
+    }
+    const deleted = Number(payload?.deleted ?? payload?.result?.deleted ?? 0);
+    failedJobsCleanupDone = true;
+    if (!silent) {
+      if (deleted > 0) showToast(`已清理 ${deleted} 条失败任务`, 'success');
+      else showToast('暂无失败任务需要清理', 'info');
+    }
+    return deleted;
+  } catch (e) {
+    if (!silent) showToast(`清理失败任务失败: ${normalizeRequestErrorMessage(e, '请求失败')}`, 'error');
+    return 0;
+  } finally {
+    timed.done();
+    if (btn) btn.disabled = false;
+  }
+}
+
+window.cleanupFailedJobs = cleanupFailedJobs;
+
 function normalizeTokenRecord(pool, raw) {
   const tokenType = poolToType(pool);
   const isString = typeof raw === 'string';
@@ -677,6 +724,7 @@ async function init() {
     logAdminDebug('token:init:no-key');
     return;
   }
+  await cleanupFailedJobs({ silent: true });
   logAdminDebug('token:init:ready');
   setupConfirmDialog();
   loadData();
@@ -1849,9 +1897,11 @@ function setActionButtonsState() {
   const exportBtn = document.getElementById('btn-batch-export');
   const updateBtn = document.getElementById('btn-batch-update');
   const deleteBtn = document.getElementById('btn-batch-delete');
+  const cleanupBtn = document.getElementById('btn-cleanup-failed-jobs');
   if (exportBtn) exportBtn.disabled = disabled || selectedCount === 0;
   if (updateBtn) updateBtn.disabled = disabled || selectedCount === 0;
   if (deleteBtn) deleteBtn.disabled = disabled || selectedCount === 0;
+  if (cleanupBtn) cleanupBtn.disabled = disabled;
 }
 
 async function startBatchDelete() {

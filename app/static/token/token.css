@@ -375,3 +375,9 @@
       background: rgba(15, 23, 42, 0.88);
       border-color: var(--border);
     }
+
+    :root[data-theme="dark"] #batch-actions #batch-progress,
+    :root[data-theme="dark"] #batch-actions #batch-progress-text,
+    :root[data-theme="dark"] #batch-actions .batch-link {
+      color: var(--accents-4) !important;
+    }

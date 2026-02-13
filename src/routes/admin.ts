@@ -39,6 +39,7 @@ import { checkRateLimits } from "../grok/rateLimits";
 import { addRequestLog, clearRequestLogs, getRequestLogs, getRequestStats } from "../repo/logs";
 import { getRefreshProgress, setRefreshProgress } from "../repo/refreshProgress";
 import {
+  cleanupAdminJobsByStatus,
   createAdminJob,
   findRunningAdminJobByType,
   getAdminJob,
@@ -87,6 +88,7 @@ const NSFW_BIRTH_DATE_API = "https://grok.com/rest/auth/set-birth-date";
 const NSFW_GRPC_API = "https://grok.com/auth_mgmt.AuthManagement/UpdateUserFeatureControls";
 const NSFW_DEFAULT_CONCURRENCY = 10;
 const NSFW_DEFAULT_RETRIES = 3;
+const ADMIN_JOB_CLEANUP_STATUSES = new Set(["failed", "cancelled", "completed"]);
 const NSFW_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
@@ -1519,6 +1521,30 @@ adminRoutes.post("/api/v1/admin/jobs/:jobId/cancel", requireAdminAuth, async (c)
     );
   } catch (e) {
     return c.json(legacyErr(`Cancel job failed: ${e instanceof Error ? e.message : String(e)}`), 500);
+  }
+});
+
+adminRoutes.post("/api/v1/admin/jobs/cleanup", requireAdminAuth, async (c) => {
+  try {
+    let body: any = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    const requestedStatuses = Array.isArray(body?.statuses) ? body.statuses : [];
+    const normalizedStatuses = Array.from(
+      new Set(
+        requestedStatuses
+          .map((item: unknown) => String(item || "").trim().toLowerCase())
+          .filter((status: string) => ADMIN_JOB_CLEANUP_STATUSES.has(status)),
+      ),
+    ) as Array<"failed" | "cancelled" | "completed">;
+    const statuses = normalizedStatuses.length ? normalizedStatuses : ["failed"];
+    const deleted = await cleanupAdminJobsByStatus(c.env.DB, statuses);
+    return c.json(legacyOk({ deleted, statuses }));
+  } catch (e) {
+    return c.json(legacyErr(`Cleanup jobs failed: ${e instanceof Error ? e.message : String(e)}`), 500);
   }
 });
 
