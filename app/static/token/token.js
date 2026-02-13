@@ -23,6 +23,9 @@ const TOKEN_LOAD_TIMEOUT_MS = 20000;
 const TOKEN_REFRESH_TIMEOUT_MS = 30000;
 const TOKEN_STATS_TIMEOUT_MS = 12000;
 const LIVE_STATS_INTERVAL_MS = 10000;
+const NSFW_REFRESH_CHUNK_SIZE = 10;
+const NSFW_REFRESH_CHUNK_CONCURRENCY = 2;
+const NSFW_REFRESH_CHUNK_RETRIES = 0;
 
 var displayTokens = [];
 var filterState = {
@@ -132,6 +135,16 @@ function logNsfwDebug(event, data) {
     if (data !== undefined) console.info(`[NSFW] ${event}`, data);
     else console.info(`[NSFW] ${event}`);
   } catch (e) {}
+}
+
+function chunkArray(items, size) {
+  const out = [];
+  const list = Array.isArray(items) ? items : [];
+  const chunkSize = Math.max(1, Math.floor(Number(size) || 1));
+  for (let i = 0; i < list.length; i += chunkSize) {
+    out.push(list.slice(i, i + chunkSize));
+  }
+  return out;
 }
 
 function normalizeSsoToken(token) {
@@ -1347,7 +1360,16 @@ async function refreshAllNsfw() {
 
   const btn = document.getElementById('btn-refresh-nsfw-all');
   const originalText = btn ? btn.innerHTML : '';
-  const estimatedTotal = collectKnownTokenValues().length;
+  let tokens = collectKnownTokenValues();
+  if (!tokens.length) {
+    await loadData();
+    tokens = collectKnownTokenValues();
+  }
+  if (!tokens.length) {
+    showToast('未找到可刷新的 Token', 'warning');
+    return;
+  }
+  const estimatedTotal = tokens.length;
   isNsfwRefreshAllRunning = true;
   if (btn) {
     btn.disabled = true;
@@ -1356,81 +1378,111 @@ async function refreshAllNsfw() {
   logNsfwDebug('start', { estimatedTotal });
 
   try {
-    const timedPrimary = withTimeoutSignal(TOKEN_REFRESH_TIMEOUT_MS);
     let usedCompatFallback = false;
-    progress.setStage('执行 NSFW 刷新');
-    let res = await fetch('/api/v1/admin/tokens/nsfw/refresh', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...buildAuthHeaders(apiKey)
-      },
-      body: JSON.stringify({ all: true }),
-      signal: timedPrimary.signal,
-    });
-    timedPrimary.done();
+    const chunks = chunkArray(tokens, NSFW_REFRESH_CHUNK_SIZE);
+    let success = 0;
+    let failed = 0;
+    let invalidated = 0;
+    let processed = 0;
+    let hardError = '';
+    const allFailedItems = [];
 
-    let payload = await parseJsonSafely(res);
-    logNsfwDebug('primary-response', { status: res.status, ok: res.ok, payload });
-    if (res.status === 404 || res.status === 405) {
-      usedCompatFallback = true;
-      progress.setStage('回退到配额刷新');
-      let tokens = collectKnownTokenValues();
-      if (!tokens.length) {
-        await loadData();
-        tokens = collectKnownTokenValues();
-      }
-      if (!tokens.length) {
-        showToast('未找到可刷新的 Token', 'warning');
-        return;
-      }
-      const timedFallback = withTimeoutSignal(TOKEN_REFRESH_TIMEOUT_MS);
-      res = await fetch('/api/v1/admin/tokens/refresh', {
+    for (let i = 0; i < chunks.length; i += 1) {
+      const chunk = chunks[i];
+      progress.setStage(`执行 NSFW 刷新 ${processed}/${estimatedTotal}`);
+      const timedPrimary = withTimeoutSignal(TOKEN_REFRESH_TIMEOUT_MS);
+      let res = await fetch('/api/v1/admin/tokens/nsfw/refresh', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...buildAuthHeaders(apiKey)
         },
-        body: JSON.stringify({ tokens }),
-        signal: timedFallback.signal,
+        body: JSON.stringify({
+          tokens: chunk,
+          enable_nsfw: true,
+          retries: NSFW_REFRESH_CHUNK_RETRIES,
+          concurrency: NSFW_REFRESH_CHUNK_CONCURRENCY,
+        }),
+        signal: timedPrimary.signal,
       });
-      timedFallback.done();
-      payload = await parseJsonSafely(res);
-      logNsfwDebug('fallback-response', { status: res.status, ok: res.ok, payload });
-      if (res.ok) {
-        payload = {
-          summary: summarizeTokenRefreshResults(payload || {}, tokens.length),
-          compatibility_mode: 'refresh_only',
-        };
+      timedPrimary.done();
+
+      let payload = await parseJsonSafely(res);
+      logNsfwDebug('chunk-response', { index: i + 1, total: chunks.length, status: res.status, ok: res.ok, payload });
+
+      if (res.status === 404 || res.status === 405) {
+        usedCompatFallback = true;
+        progress.setStage(`回退配额刷新 ${processed}/${estimatedTotal}`);
+        const timedFallback = withTimeoutSignal(TOKEN_REFRESH_TIMEOUT_MS);
+        res = await fetch('/api/v1/admin/tokens/refresh', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...buildAuthHeaders(apiKey)
+          },
+          body: JSON.stringify({ tokens: chunk }),
+          signal: timedFallback.signal,
+        });
+        timedFallback.done();
+        payload = await parseJsonSafely(res);
+        logNsfwDebug('chunk-fallback-response', { index: i + 1, total: chunks.length, status: res.status, ok: res.ok, payload });
+        if (res.ok) {
+          payload = {
+            summary: summarizeTokenRefreshResults(payload || {}, chunk.length),
+            compatibility_mode: 'refresh_only',
+          };
+        }
+      }
+
+      if (!res.ok) {
+        failed += chunk.length;
+        hardError = extractApiErrorMessage(payload, hardError || 'NSFW 刷新失败');
+        allFailedItems.push({
+          token: chunk[0] || '',
+          step: 'request',
+          error: hardError,
+        });
+        processed += chunk.length;
+        continue;
+      }
+
+      const summary = payload?.summary || {};
+      const chunkTotal = Number(summary.total || chunk.length);
+      const chunkSuccess = Number(summary.success || 0);
+      const chunkFailed = Number(summary.failed || Math.max(0, chunkTotal - chunkSuccess));
+      const chunkInvalidated = Number(summary.invalidated || 0);
+      success += chunkSuccess;
+      failed += chunkFailed;
+      invalidated += chunkInvalidated;
+      processed += chunk.length;
+      if (Array.isArray(payload?.failed) && payload.failed.length) {
+        allFailedItems.push(...payload.failed);
       }
     }
-    if (!res.ok) {
-      const failedDetails = summarizeFailedItems(payload);
+
+    const total = estimatedTotal;
+    if (hardError && success === 0) {
+      const failedDetails = summarizeFailedItems({ failed: allFailedItems });
       if (failedDetails) {
         showToast(`失败详情: ${failedDetails}`, 'warning');
       }
-      showToast(extractApiErrorMessage(payload, 'NSFW 刷新失败'), 'error');
-      logNsfwDebug('failed', { status: res.status, payload });
+      showToast(hardError, 'error');
+      logNsfwDebug('failed', { hardError, failedItems: allFailedItems });
       return;
     }
 
-    const summary = payload?.summary || {};
-    const total = Number(summary.total || 0);
-    const success = Number(summary.success || 0);
-    const failed = Number(summary.failed || 0);
-    const invalidated = Number(summary.invalidated || 0);
     showToast(
       `NSFW 刷新完成：总计 ${total}，成功 ${success}，失败 ${failed}，失效 ${invalidated}`,
       failed > 0 ? 'info' : 'success'
     );
-    const failedDetails = summarizeFailedItems(payload);
+    const failedDetails = summarizeFailedItems({ failed: allFailedItems });
     if (failedDetails) {
       showToast(`失败详情: ${failedDetails}`, 'warning');
     }
     if (usedCompatFallback) {
       showToast('当前部署未提供 NSFW 专用接口，已降级为 Token 配额刷新。', 'warning');
     }
-    logNsfwDebug('completed', { summary, usedCompatFallback, failed: payload?.failed || [] });
+    logNsfwDebug('completed', { total, success, failed, invalidated, usedCompatFallback, failedItems: allFailedItems });
     loadData();
   } catch (e) {
     showToast(`NSFW 刷新失败: ${normalizeRequestErrorMessage(e, '请求失败')}`, 'error');
