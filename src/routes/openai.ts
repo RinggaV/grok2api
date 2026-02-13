@@ -275,12 +275,72 @@ function toBool(input: unknown): boolean {
   return normalized === "true" || normalized === "1" || normalized === "yes";
 }
 
+function normalizeGeneratedImageUrlCandidate(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const s = value.trim();
+  if (!s || s === "/") return null;
+  return s;
+}
+
+function extractGeneratedImageUrl(value: unknown): string | null {
+  const direct = normalizeGeneratedImageUrlCandidate(value);
+  if (direct) return direct;
+
+  if (!value || typeof value !== "object") return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const candidate = extractGeneratedImageUrl(item);
+      if (candidate) return candidate;
+    }
+    return null;
+  }
+
+  const item = value as Record<string, unknown>;
+  const sizedKeys = ["LARGE", "large", "ORIGINAL", "original", "MEDIUM", "medium", "SMALL", "small"];
+  for (const key of sizedKeys) {
+    const candidate = extractGeneratedImageUrl(item[key]);
+    if (candidate) return candidate;
+  }
+
+  const directKeys = ["url", "uri", "href", "src", "imageUrl", "imageURL", "assetUrl", "originalUrl"];
+  for (const key of directKeys) {
+    const candidate = normalizeGeneratedImageUrlCandidate(item[key]);
+    if (candidate) return candidate;
+  }
+
+  const variants = item.variants ?? item.images ?? item.urls;
+  if (Array.isArray(variants)) {
+    const priority = ["LARGE", "ORIGINAL", "MEDIUM", "SMALL"];
+    for (const p of priority) {
+      for (const variant of variants) {
+        if (!variant || typeof variant !== "object" || Array.isArray(variant)) continue;
+        const record = variant as Record<string, unknown>;
+        const tag = String(record.size ?? record.name ?? "").trim().toUpperCase();
+        if (tag !== p) continue;
+        const candidate = extractGeneratedImageUrl(variant);
+        if (candidate) return candidate;
+      }
+    }
+    for (const variant of variants) {
+      const candidate = extractGeneratedImageUrl(variant);
+      if (candidate) return candidate;
+    }
+  }
+
+  return null;
+}
+
 function normalizeGeneratedImageUrls(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
-  return input
-    .filter((u): u is string => typeof u === "string")
-    .map((u) => u.trim())
-    .filter((u) => Boolean(u && u !== "/"));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of input) {
+    const value = extractGeneratedImageUrl(item);
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
 }
 
 function dedupeImages(images: string[]): string[] {

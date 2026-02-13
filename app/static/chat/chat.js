@@ -75,8 +75,30 @@ function toImageDataUrl(raw) {
   return `data:${mime};base64,${value}`;
 }
 
+function pickFromSizedImageObject(obj) {
+  if (!obj || typeof obj !== 'object') return '';
+  const keys = ['LARGE', 'large', 'ORIGINAL', 'original', 'MEDIUM', 'medium', 'SMALL', 'small'];
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (value && typeof value === 'object') {
+      const nested = String(value.url || value.uri || value.href || value.src || '').trim();
+      if (nested) return nested;
+    }
+  }
+  return '';
+}
+
+function normalizeImageUrlLike(value) {
+  if (typeof value === 'string') return value.trim();
+  if (!value || typeof value !== 'object') return '';
+  const bySize = pickFromSizedImageObject(value);
+  if (bySize) return bySize;
+  return String(value.url || value.uri || value.href || value.src || value.imageUrl || value.imageURL || '').trim();
+}
+
 function pickImageSrc(item) {
-  const rawUrl = String(item?.url || '').trim();
+  const rawUrl = normalizeImageUrlLike(item?.url) || normalizeImageUrlLike(item);
   const rawUrlLower = rawUrl.toLowerCase();
   if (
     rawUrl &&

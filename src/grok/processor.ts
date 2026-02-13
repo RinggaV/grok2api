@@ -91,26 +91,77 @@ function encodeAssetPath(raw: string): string {
   }
 }
 
-function normalizeGeneratedAssetUrls(input: unknown): string[] {
-  if (!Array.isArray(input)) return [];
+function normalizeGeneratedAssetUrlCandidate(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const s = value.trim();
+  if (!s || s === "/") return null;
+  try {
+    const u = new URL(s);
+    if (u.pathname === "/" && !u.search && !u.hash) return null;
+  } catch {
+    // path-style strings are allowed
+  }
+  return s;
+}
 
-  const out: string[] = [];
-  for (const v of input) {
-    if (typeof v !== "string") continue;
-    const s = v.trim();
-    if (!s) continue;
-    if (s === "/") continue;
+function extractGeneratedAssetUrl(value: unknown): string | null {
+  const direct = normalizeGeneratedAssetUrlCandidate(value);
+  if (direct) return direct;
 
-    try {
-      const u = new URL(s);
-      if (u.pathname === "/" && !u.search && !u.hash) continue;
-    } catch {
-      // ignore (path-style strings are allowed)
+  if (!value || typeof value !== "object") return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const candidate = extractGeneratedAssetUrl(item);
+      if (candidate) return candidate;
     }
-
-    out.push(s);
+    return null;
   }
 
+  const item = value as Record<string, unknown>;
+  const sizedKeys = ["LARGE", "large", "ORIGINAL", "original", "MEDIUM", "medium", "SMALL", "small"];
+  for (const key of sizedKeys) {
+    const candidate = extractGeneratedAssetUrl(item[key]);
+    if (candidate) return candidate;
+  }
+
+  const directKeys = ["url", "uri", "href", "src", "imageUrl", "imageURL", "assetUrl", "originalUrl"];
+  for (const key of directKeys) {
+    const candidate = normalizeGeneratedAssetUrlCandidate(item[key]);
+    if (candidate) return candidate;
+  }
+
+  const variants = item.variants ?? item.images ?? item.urls;
+  if (Array.isArray(variants)) {
+    const priority = ["LARGE", "ORIGINAL", "MEDIUM", "SMALL"];
+    for (const p of priority) {
+      for (const variant of variants) {
+        if (!variant || typeof variant !== "object" || Array.isArray(variant)) continue;
+        const record = variant as Record<string, unknown>;
+        const tag = String(record.size ?? record.name ?? "").trim().toUpperCase();
+        if (tag !== p) continue;
+        const candidate = extractGeneratedAssetUrl(variant);
+        if (candidate) return candidate;
+      }
+    }
+    for (const variant of variants) {
+      const candidate = extractGeneratedAssetUrl(variant);
+      if (candidate) return candidate;
+    }
+  }
+
+  return null;
+}
+
+function normalizeGeneratedAssetUrls(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of input) {
+    const value = extractGeneratedAssetUrl(item);
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
   return out;
 }
 

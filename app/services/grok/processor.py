@@ -16,6 +16,77 @@ from app.services.grok.assets import DownloadService
 ASSET_URL = "https://assets.grok.com/"
 
 
+def _normalize_generated_image_url_candidate(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    s = value.strip()
+    if not s or s == "/":
+        return ""
+    return s
+
+
+def _extract_generated_image_url(value: Any) -> str:
+    direct = _normalize_generated_image_url_candidate(value)
+    if direct:
+        return direct
+
+    if isinstance(value, list):
+        for item in value:
+            candidate = _extract_generated_image_url(item)
+            if candidate:
+                return candidate
+        return ""
+
+    if not isinstance(value, dict):
+        return ""
+
+    sized_keys = ["LARGE", "large", "ORIGINAL", "original", "MEDIUM", "medium", "SMALL", "small"]
+    for key in sized_keys:
+        candidate = _extract_generated_image_url(value.get(key))
+        if candidate:
+            return candidate
+
+    direct_keys = ["url", "uri", "href", "src", "imageUrl", "imageURL", "assetUrl", "originalUrl"]
+    for key in direct_keys:
+        candidate = _normalize_generated_image_url_candidate(value.get(key))
+        if candidate:
+            return candidate
+
+    variants = value.get("variants") or value.get("images") or value.get("urls")
+    if isinstance(variants, list):
+        priority = ["LARGE", "ORIGINAL", "MEDIUM", "SMALL"]
+        for p in priority:
+            for variant in variants:
+                if not isinstance(variant, dict):
+                    continue
+                tag = str(variant.get("size") or variant.get("name") or "").strip().upper()
+                if tag != p:
+                    continue
+                candidate = _extract_generated_image_url(variant)
+                if candidate:
+                    return candidate
+        for variant in variants:
+            candidate = _extract_generated_image_url(variant)
+            if candidate:
+                return candidate
+
+    return ""
+
+
+def _normalize_generated_image_urls(input_data: Any) -> List[str]:
+    if not isinstance(input_data, list):
+        return []
+    out: List[str] = []
+    seen = set()
+    for item in input_data:
+        url = _extract_generated_image_url(item)
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        out.append(url)
+    return out
+
+
 def _build_video_poster_preview(video_url: str, thumbnail_url: str = "") -> str:
     """将 <video> 替换为可点击的 Poster 预览图（用于前端展示）"""
     safe_video = html.escape(video_url or "", quote=True)
@@ -167,8 +238,8 @@ class StreamProcessor(BaseProcessor):
                         yield self._sse("</think>\n")
                         self.think_opened = False
                     
-                    # 处理生成的图片
-                    for url in mr.get("generatedImageUrls", []):
+                    # 处理生成的图片（兼容字符串与 {LARGE: "..."} 结构）
+                    for url in _normalize_generated_image_urls(mr.get("generatedImageUrls", [])):
                         parts = url.split("/")
                         img_id = parts[-2] if len(parts) >= 2 else "image"
                         
@@ -235,7 +306,7 @@ class CollectProcessor(BaseProcessor):
                     response_id = mr.get("responseId", "")
                     content = mr.get("message", "")
                     
-                    if urls := mr.get("generatedImageUrls"):
+                    if urls := _normalize_generated_image_urls(mr.get("generatedImageUrls")):
                         content += "\n"
                         for url in urls:
                             parts = url.split("/")
@@ -491,7 +562,7 @@ class ImageStreamProcessor(BaseProcessor):
                 
                 # modelResponse
                 if mr := resp.get("modelResponse"):
-                    if urls := mr.get("generatedImageUrls"):
+                    if urls := _normalize_generated_image_urls(mr.get("generatedImageUrls")):
                         for url in urls:
                             if self.response_format == "url":
                                 processed = await self.process_url(url, "image")
@@ -562,7 +633,7 @@ class ImageCollectProcessor(BaseProcessor):
                 resp = data.get("result", {}).get("response", {})
                 
                 if mr := resp.get("modelResponse"):
-                    if urls := mr.get("generatedImageUrls"):
+                    if urls := _normalize_generated_image_urls(mr.get("generatedImageUrls")):
                         for url in urls:
                             if self.response_format == "url":
                                 processed = await self.process_url(url, "image")
