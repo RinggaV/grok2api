@@ -11,6 +11,7 @@ export interface OpenAIChatRequestBody {
   model: string;
   messages: OpenAIChatMessage[];
   stream?: boolean;
+  enable_nsfw?: boolean;
   video_config?: {
     aspect_ratio?: string;
     video_length?: number;
@@ -114,6 +115,7 @@ export function buildConversationPayload(args: {
   imgIds: string[];
   imgUris: string[];
   postId?: string;
+  enableNsfw?: boolean;
   videoConfig?: {
     aspect_ratio?: string;
     video_length?: number;
@@ -124,6 +126,7 @@ export function buildConversationPayload(args: {
   settings: GrokSettings;
 }): { payload: Record<string, unknown>; referer?: string; isVideoModel: boolean } {
   const { requestModel, content, imgIds, imgUris, postId, settings } = args;
+  const enableNsfw = args.enableNsfw === true;
   const cfg = getModelInfo(requestModel);
   const { grokModel, mode, isVideoModel } = toGrokModel(requestModel);
 
@@ -150,6 +153,7 @@ export function buildConversationPayload(args: {
         temporary: true,
         modelName: "grok-3",
         message: prompt,
+        ...(enableNsfw ? { enableNsfw: true, enable_nsfw: true } : {}),
         toolOverrides: { videoGen: true },
         enableSideBySide: true,
         responseMetadata: {
@@ -200,6 +204,7 @@ export function buildConversationPayload(args: {
       forceSideBySide: false,
       modelMode: mode,
       isAsyncChat: false,
+      ...(enableNsfw ? { enableNsfw: true, enable_nsfw: true } : {}),
     },
   };
 }

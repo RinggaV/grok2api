@@ -1299,6 +1299,8 @@ openAiRoutes.post("/chat/completions", async (c) => {
       model?: string;
       messages?: any[];
       stream?: boolean;
+      enable_nsfw?: boolean | number | string;
+      enableNsfw?: boolean | number | string;
       video_config?: {
         aspect_ratio?: string;
         video_length?: number;
@@ -1315,6 +1317,7 @@ openAiRoutes.post("/chat/completions", async (c) => {
 
     const settingsBundle = await getSettings(c.env);
     const cfg = MODEL_CONFIG[requestedModel]!;
+    const enableNsfw = toBool(body.enable_nsfw ?? body.enableNsfw);
 
     const retryCodes = Array.isArray(settingsBundle.grok.retry_status_codes)
       ? settingsBundle.grok.retry_status_codes
@@ -1401,6 +1404,7 @@ openAiRoutes.post("/chat/completions", async (c) => {
           imgIds,
           imgUris,
           imageGeneration: { enabled: enableImageGeneration, count: enableImageGeneration ? 2 : 0 },
+          enableNsfw,
           ...(postId ? { postId } : {}),
           ...(isVideoModel && body.video_config ? { videoConfig: body.video_config } : {}),
           settings: settingsBundle.grok,

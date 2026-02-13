@@ -35,6 +35,10 @@ function isRawResponseMode() {
   return Boolean(q('raw-response-toggle')?.checked);
 }
 
+function isNsfwMode() {
+  return Boolean(q('nsfw-toggle')?.checked);
+}
+
 function buildApiHeaders() {
   const k = getUserApiKey();
   return k ? { Authorization: `Bearer ${k}` } : {};
@@ -976,6 +980,7 @@ async function sendChat() {
 
   const model = String(q('model-select').value || '').trim();
   const stream = Boolean(q('stream-toggle').checked);
+  const enableNsfw = isNsfwMode();
 
   const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
   if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
@@ -1003,7 +1008,7 @@ async function sendChat() {
     chatAttachments = [];
     renderAttachments('chat');
 
-    const body = { model, messages: chatMessages, stream };
+    const body = { model, messages: chatMessages, stream, enable_nsfw: enableNsfw };
 
     if (stream) {
       const assistantBubble = showUserMsg('assistant', '');
@@ -1029,10 +1034,11 @@ async function resendUserMessage(userMessageIndex) {
 
   const model = String(q('model-select').value || '').trim();
   const stream = Boolean(q('stream-toggle').checked);
+  const enableNsfw = isNsfwMode();
   const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
   if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
 
-  const body = { model, messages: chatMessages.slice(0, userMessageIndex + 1), stream };
+  const body = { model, messages: chatMessages.slice(0, userMessageIndex + 1), stream, enable_nsfw: enableNsfw };
   try {
     if (stream) {
       const assistantBubble = showUserMsg('assistant', '');
@@ -1247,13 +1253,14 @@ async function generateImage() {
   const model = String(q('model-select').value || 'grok-imagine-1.0').trim();
   const n = Math.max(1, Math.min(10, Math.floor(Number(q('image-n').value || 1) || 1)));
   const stream = Boolean(q('stream-toggle').checked);
+  const enableNsfw = isNsfwMode();
   const useStream = stream && n <= 2;
   const { size, concurrency } = buildImageRequestConfig();
 
   q('image-results').innerHTML = '';
   showToast('生成中...', 'info');
 
-  const reqBody = { prompt, model, n, size, concurrency };
+  const reqBody = { prompt, model, n, size, concurrency, enable_nsfw: enableNsfw };
   try {
     if (stream && !useStream) {
       showToast('n > 2 disables stream and falls back to non-stream mode.', 'warning');
@@ -1301,6 +1308,7 @@ async function generateVideo() {
 
   const model = String(q('model-select').value || 'grok-imagine-1.0-video').trim();
   const stream = Boolean(q('stream-toggle').checked);
+  const enableNsfw = isNsfwMode();
   const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
   if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
 
@@ -1322,7 +1330,7 @@ async function generateVideo() {
       ? [{ type: 'text', text: prompt }, ...imgUrls.map((u) => ({ type: 'image_url', image_url: { url: u } }))]
       : prompt;
 
-    const reqBody = { model, messages: [{ role: 'user', content: userContent }], stream, video_config: videoConfig };
+    const reqBody = { model, messages: [{ role: 'user', content: userContent }], stream, enable_nsfw: enableNsfw, video_config: videoConfig };
 
     q('video-results').innerHTML = '';
     const bubble = document.createElement('div');

@@ -18,6 +18,36 @@
   margin-bottom: 6px;
 }
 
+.chat-options-wrap {
+  min-width: 0;
+}
+
+.chat-options {
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: #fff;
+}
+
+.chat-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accents-6);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chat-option .checkbox {
+  margin: 0;
+}
+
 .tabs {
   display: flex;
   gap: 8px;
@@ -458,6 +488,20 @@
   .chat-messages {
     height: 300px;
     padding: 10px;
+  }
+
+  .chat-config-grid {
+    align-items: stretch;
+  }
+
+  .chat-options {
+    gap: 8px 10px;
+    padding: 8px;
+  }
+
+  .chat-option {
+    flex: 0 0 calc(50% - 6px);
+    min-width: 0;
   }
 
   .msg {

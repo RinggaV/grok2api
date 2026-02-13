@@ -10,7 +10,7 @@
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
   <link href="/static/common/common.css?v=4" rel="stylesheet">
-  <link href="/static/chat/chat.css?v=3" rel="stylesheet" data-page="chat">
+  <link href="/static/chat/chat.css?v=4" rel="stylesheet" data-page="chat">
   <link href="/static/common/toast.css" rel="stylesheet">
   <script>
     window.__CHAT_ADMIN__ = true;
@@ -25,27 +25,36 @@
   <main class="flex-1 container mx-auto max-w-5xl px-6 py-6 fade-in space-y-4">
     <div class="card">
       <div class="card-title">连接配置</div>
-      <div class="grid grid-cols-12 gap-3 items-end">
+      <div class="grid grid-cols-12 gap-3 items-end chat-config-grid">
         <div class="col-span-12 md:col-span-5">
           <label class="field-label">API Key（Bearer）</label>
           <input id="api-key-input" type="password" class="geist-input font-mono" placeholder="优先从后台配置自动填充，可手动覆盖" />
           <div class="text-xs text-[var(--accents-5)] mt-1">后台入口会尝试读取“配置管理 -> API 密钥”自动填充。</div>
         </div>
-        <div class="col-span-12 md:col-span-4">
+        <div class="col-span-12 md:col-span-3">
           <label class="field-label">模型</label>
           <select id="model-select" class="geist-input h-[34px]"></select>
         </div>
-        <div class="col-span-6 md:col-span-1 flex items-center gap-2">
-          <input id="stream-toggle" type="checkbox" class="checkbox" checked>
-          <label for="stream-toggle" class="text-sm">流式输出</label>
-        </div>
-        <div class="col-span-6 md:col-span-1 flex items-center gap-2">
-          <input id="think-toggle" type="checkbox" class="checkbox">
-          <label for="think-toggle" class="text-sm">显示思考</label>
-        </div>
-        <div class="col-span-6 md:col-span-1 flex items-center gap-2">
-          <input id="raw-response-toggle" type="checkbox" class="checkbox">
-          <label for="raw-response-toggle" class="text-sm">显示原始响应</label>
+        <div class="col-span-12 md:col-span-4 chat-options-wrap">
+          <label class="field-label">会话选项</label>
+          <div class="chat-options">
+            <label class="chat-option" for="stream-toggle">
+              <input id="stream-toggle" type="checkbox" class="checkbox" checked>
+              <span>流式输出</span>
+            </label>
+            <label class="chat-option" for="think-toggle">
+              <input id="think-toggle" type="checkbox" class="checkbox">
+              <span>显示思考</span>
+            </label>
+            <label class="chat-option" for="raw-response-toggle">
+              <input id="raw-response-toggle" type="checkbox" class="checkbox">
+              <span>显示原始响应</span>
+            </label>
+            <label class="chat-option" for="nsfw-toggle">
+              <input id="nsfw-toggle" type="checkbox" class="checkbox">
+              <span>NSFW 模式</span>
+            </label>
+          </div>
         </div>
       </div>
     </div>
@@ -201,7 +210,7 @@
   <script src="/static/common/admin-auth.js?v=9"></script>
   <script src="/static/common/header.js?v=11"></script>
   <script src="/static/common/footer.js?v=2"></script>
-  <script src="/static/chat/chat.js?v=9" data-page="chat"></script>
+  <script src="/static/chat/chat.js?v=10" data-page="chat"></script>
 </body>
 
 </html>
