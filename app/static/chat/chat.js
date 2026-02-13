@@ -22,7 +22,9 @@ function q(id) {
 }
 
 function isAdminChat() {
-  return Boolean(window.__CHAT_ADMIN__);
+  if (window.__CHAT_ADMIN__) return true;
+  const path = String(window.location.pathname || '');
+  return path.startsWith('/admin/chat') || path.startsWith('/chat/chat_admin');
 }
 
 function getUserApiKey() {
@@ -1381,12 +1383,16 @@ async function streamVideo(body, bubbleEl) {
   }
 }
 
-if (window.__CHAT_ADMIN__) {
+if (isAdminChat()) {
+  window.__CHAT_ADMIN__ = true;
   const registry = window.__pageRegistry || (window.__pageRegistry = {});
   const pageInit = init;
+  const pageCleanup = () => {
+    stopImageContinuous();
+  };
   registry.chat = {
     init: pageInit,
-    cleanup: null,
+    cleanup: pageCleanup,
   };
 } else if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init);

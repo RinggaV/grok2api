@@ -256,13 +256,13 @@ async function detectWorkersRuntime() {
 }
 
 async function applyRuntimeUiFlags() {
-  // Default hide first; show back for local/docker after detection.
+  // NSFW refresh is a server API capability; keep it visible by default.
+  setNsfwRefreshUiEnabled(true);
+  // Auto-register still depends on runtime capability.
   setAutoRegisterUiEnabled(false);
-  setNsfwRefreshUiEnabled(false);
   isWorkersRuntime = await detectWorkersRuntime();
   if (!isWorkersRuntime) {
     setAutoRegisterUiEnabled(true);
-    setNsfwRefreshUiEnabled(true);
   }
 }
 
