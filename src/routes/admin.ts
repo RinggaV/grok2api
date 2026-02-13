@@ -278,7 +278,7 @@ async function setNsfwForToken(
         "x-user-agent": "connect-es/2.1.1",
         Cookie: cookie,
       },
-      body: payload,
+      body: new Blob([payload], { type: "application/grpc-web+proto" }),
     });
     if (res.status !== 200) {
       return { ok: false, status: res.status, grpcStatus: -1, error: `HTTP ${res.status}` };
