@@ -41,6 +41,7 @@ import { getRefreshProgress, setRefreshProgress } from "../repo/refreshProgress"
 import {
   type AdminJobStatus,
   cleanupAdminJobsByStatus,
+  cleanupStaleAdminJobs,
   createAdminJob,
   deleteAdminJob,
   findRunningAdminJobByType,
@@ -91,6 +92,7 @@ const NSFW_GRPC_API = "https://grok.com/auth_mgmt.AuthManagement/UpdateUserFeatu
 const NSFW_DEFAULT_CONCURRENCY = 10;
 const NSFW_DEFAULT_RETRIES = 3;
 const ADMIN_JOB_CLEANUP_STATUSES = new Set(["failed", "cancelled", "completed"]);
+const ADMIN_JOB_STALE_CLEANUP_STATUSES = new Set(["queued", "running"]);
 const NSFW_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
 
@@ -1569,6 +1571,42 @@ adminRoutes.post("/api/v1/admin/jobs/cleanup", requireAdminAuth, async (c) => {
     return c.json(legacyOk({ deleted, statuses }));
   } catch (e) {
     return c.json(legacyErr(`Cleanup jobs failed: ${e instanceof Error ? e.message : String(e)}`), 500);
+  }
+});
+
+adminRoutes.post("/api/v1/admin/jobs/cleanup-stale", requireAdminAuth, async (c) => {
+  try {
+    let body: any = {};
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    const staleMinutes = parsePositiveInt(body?.stale_minutes, 15, 1, 7 * 24 * 60);
+    const requestedStatuses = Array.isArray(body?.statuses) ? body.statuses : [];
+    const normalizedStatuses = Array.from(
+      new Set(
+        requestedStatuses
+          .map((item: unknown) => String(item || "").trim().toLowerCase())
+          .filter((status: string) => ADMIN_JOB_STALE_CLEANUP_STATUSES.has(status)),
+      ),
+    ) as AdminJobStatus[];
+    const statuses: AdminJobStatus[] = normalizedStatuses.length ? normalizedStatuses : ["queued", "running"];
+    const cleanup = await cleanupStaleAdminJobs(c.env.DB, {
+      staleMs: staleMinutes * 60 * 1000,
+      statuses,
+      limit: parsePositiveInt(body?.limit, 1000, 1, 5000),
+    });
+    return c.json(
+      legacyOk({
+        deleted: cleanup.deleted,
+        statuses,
+        stale_minutes: staleMinutes,
+        job_ids: cleanup.jobIds,
+      }),
+    );
+  } catch (e) {
+    return c.json(legacyErr(`Cleanup stale jobs failed: ${e instanceof Error ? e.message : String(e)}`), 500);
   }
 });
 

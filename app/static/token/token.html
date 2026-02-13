@@ -185,6 +185,9 @@
       <button id="btn-cleanup-failed-jobs" onclick="cleanupFailedJobs({ force: true })" class="geist-button-outline text-xs px-3">
         清理失败任务
       </button>
+      <button id="btn-cleanup-stale-jobs" onclick="cleanupStaleJobs({ stale_minutes: 15 })" class="geist-button-outline text-xs px-3">
+        清理卡死任务
+      </button>
     </div>
     <div id="batch-progress" class="hidden text-xs text-[var(--accents-5)] flex items-center gap-2">
       <span class="toolbar-sep"></span>
@@ -367,7 +370,7 @@
   <script src="/static/common/header.js?v=11"></script>
   <script src="/static/common/footer.js?v=2"></script>
   <script src="/static/common/toast.js"></script>
-  <script src="/static/token/token.js?v=36" data-page="token"></script>
+  <script src="/static/token/token.js?v=37" data-page="token"></script>
 </body>
 
 </html>

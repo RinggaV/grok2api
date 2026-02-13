@@ -562,6 +562,59 @@ async function cleanupFailedJobs(options = {}) {
 
 window.cleanupFailedJobs = cleanupFailedJobs;
 
+async function cleanupStaleJobs(options = {}) {
+  const silent = Boolean(options.silent);
+  const staleMinutes = Math.max(1, Number(options.stale_minutes || 15));
+  if (!apiKey) return 0;
+  const btn = document.getElementById('btn-cleanup-stale-jobs');
+  if (btn) btn.disabled = true;
+  const timed = withTimeoutSignal(15000);
+  try {
+    const res = await fetch('/api/v1/admin/jobs/cleanup-stale', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildAuthHeaders(apiKey),
+      },
+      body: JSON.stringify({
+        stale_minutes: staleMinutes,
+        statuses: ['queued', 'running'],
+      }),
+      signal: timed.signal,
+    });
+    const payload = await parseJsonSafely(res);
+    if (res.status === 401) {
+      logout();
+      return 0;
+    }
+    if (!res.ok || payload?.status === 'error') {
+      const message = extractApiErrorMessage(payload, `HTTP ${res.status}`);
+      if (!silent) showToast(`清理卡死任务失败: ${message}`, 'error');
+      return 0;
+    }
+    const deleted = Number(payload?.deleted ?? payload?.result?.deleted ?? 0);
+    if (!silent) {
+      if (deleted > 0) showToast(`已清理 ${deleted} 条卡死任务`, 'success');
+      else showToast('暂无卡死任务需要清理', 'info');
+    }
+    if (deleted > 0) {
+      stopRefreshJobPolling();
+      clearActiveRefreshJob();
+      resetRefreshJobUi();
+      if (hasTokenDom()) loadData();
+    }
+    return deleted;
+  } catch (e) {
+    if (!silent) showToast(`清理卡死任务失败: ${normalizeRequestErrorMessage(e, '请求失败')}`, 'error');
+    return 0;
+  } finally {
+    timed.done();
+    if (btn) btn.disabled = false;
+  }
+}
+
+window.cleanupStaleJobs = cleanupStaleJobs;
+
 function normalizeTokenRecord(pool, raw) {
   const tokenType = poolToType(pool);
   const isString = typeof raw === 'string';
@@ -1922,10 +1975,12 @@ function setActionButtonsState() {
   const updateBtn = document.getElementById('btn-batch-update');
   const deleteBtn = document.getElementById('btn-batch-delete');
   const cleanupBtn = document.getElementById('btn-cleanup-failed-jobs');
+  const cleanupStaleBtn = document.getElementById('btn-cleanup-stale-jobs');
   if (exportBtn) exportBtn.disabled = disabled || selectedCount === 0;
   if (updateBtn) updateBtn.disabled = disabled || selectedCount === 0;
   if (deleteBtn) deleteBtn.disabled = disabled || selectedCount === 0;
   if (cleanupBtn) cleanupBtn.disabled = isBatchProcessing;
+  if (cleanupStaleBtn) cleanupStaleBtn.disabled = isBatchProcessing;
 }
 
 async function startBatchDelete() {

@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { dbFirst, dbRun } from "../db";
+import { dbAll, dbFirst, dbRun } from "../db";
 import { nowMs } from "../utils/time";
 
 export type AdminJobType = "token_refresh" | "token_nsfw_refresh";
@@ -241,4 +241,30 @@ export async function cleanupAdminJobsByStatus(db: Env["DB"], statuses: AdminJob
   if (total <= 0) return 0;
   await dbRun(db, `DELETE FROM admin_jobs WHERE status IN (${placeholders})`, deduped);
   return total;
+}
+
+export async function cleanupStaleAdminJobs(
+  db: Env["DB"],
+  options: { staleMs: number; statuses?: AdminJobStatus[]; limit?: number },
+): Promise<{ deleted: number; jobIds: string[] }> {
+  await ensureAdminJobsTable(db);
+  const staleMs = Math.max(60_000, Math.floor(Number(options?.staleMs || 0)));
+  const cutoff = nowMs() - staleMs;
+  const statuses = Array.from(new Set((options?.statuses || ["queued", "running"]).filter(Boolean)));
+  if (!statuses.length) return { deleted: 0, jobIds: [] };
+  const limit = Math.max(1, Math.min(5000, Math.floor(Number(options?.limit || 1000))));
+  const placeholders = statuses.map(() => "?").join(",");
+  const rows = await dbAll<{ job_id: string }>(
+    db,
+    `SELECT job_id FROM admin_jobs
+     WHERE status IN (${placeholders}) AND updated_at <= ?
+     ORDER BY updated_at ASC
+     LIMIT ?`,
+    [...statuses, cutoff, limit],
+  );
+  const jobIds = rows.map((row) => String(row.job_id || "").trim()).filter(Boolean);
+  if (!jobIds.length) return { deleted: 0, jobIds: [] };
+  const deletePlaceholders = jobIds.map(() => "?").join(",");
+  await dbRun(db, `DELETE FROM admin_jobs WHERE job_id IN (${deletePlaceholders})`, jobIds);
+  return { deleted: jobIds.length, jobIds };
 }
