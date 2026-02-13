@@ -33,7 +33,7 @@ const TOKEN_JOB_POLL_INTERVAL_MS = 650;
 const TOKEN_JOB_POLL_RETRY_BASE_MS = 1200;
 const TOKEN_JOB_POLL_RETRY_MAX_MS = 6000;
 const TOKEN_ACTIVE_JOB_STORAGE_KEY = 'grok2api_token_active_job';
-const NSFW_REFRESH_JOB_RETRIES = 0;
+const NSFW_REFRESH_JOB_RETRIES = 2;
 
 var displayTokens = [];
 var filterState = {
@@ -515,7 +515,7 @@ async function cleanupFailedJobs(options = {}) {
         'Content-Type': 'application/json',
         ...buildAuthHeaders(apiKey),
       },
-      body: JSON.stringify({ statuses: ['failed'] }),
+      body: JSON.stringify({ statuses: ['failed', 'cancelled', 'completed'] }),
       signal: timed.signal,
     });
     const payload = await parseJsonSafely(res);
@@ -533,6 +533,9 @@ async function cleanupFailedJobs(options = {}) {
     if (!silent) {
       if (deleted > 0) showToast(`已清理 ${deleted} 条失败任务`, 'success');
       else showToast('暂无失败任务需要清理', 'info');
+    }
+    if (deleted > 0 && hasTokenDom() && !silent) {
+      loadData();
     }
     return deleted;
   } catch (e) {
@@ -679,6 +682,12 @@ function setNsfwRefreshUiEnabled(enabled) {
   }
 }
 
+function ensureTokenPageControlsVisible() {
+  const batchActions = document.getElementById('batch-actions');
+  if (batchActions) batchActions.classList.remove('hidden');
+  setNsfwRefreshUiEnabled(true);
+}
+
 async function detectWorkersRuntime() {
   try {
     const res = await fetch('/health', { cache: 'no-store' });
@@ -719,6 +728,8 @@ async function init() {
     logAdminDebug('token:init:skip-no-dom');
     return;
   }
+  ensureTokenPageControlsVisible();
+  applyRuntimeUiFlags().catch(() => {});
   apiKey = await ensureApiKey();
   if (apiKey === null) {
     logAdminDebug('token:init:no-key');
@@ -1901,7 +1912,7 @@ function setActionButtonsState() {
   if (exportBtn) exportBtn.disabled = disabled || selectedCount === 0;
   if (updateBtn) updateBtn.disabled = disabled || selectedCount === 0;
   if (deleteBtn) deleteBtn.disabled = disabled || selectedCount === 0;
-  if (cleanupBtn) cleanupBtn.disabled = disabled;
+  if (cleanupBtn) cleanupBtn.disabled = isBatchProcessing;
 }
 
 async function startBatchDelete() {

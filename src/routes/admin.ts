@@ -85,6 +85,7 @@ function normalizeSsoToken(raw: string): string {
   return t.startsWith("sso=") ? t.slice(4).trim() : t;
 }
 
+const NSFW_TOS_API = "https://accounts.x.ai/auth_mgmt.AuthManagement/SetTosAcceptedVersion";
 const NSFW_BIRTH_DATE_API = "https://grok.com/rest/auth/set-birth-date";
 const NSFW_GRPC_API = "https://grok.com/auth_mgmt.AuthManagement/UpdateUserFeatureControls";
 const NSFW_DEFAULT_CONCURRENCY = 10;
@@ -163,6 +164,10 @@ function encodeGrpcWebPayload(message: Uint8Array): Uint8Array {
   frame[4] = message.length & 0xff;
   frame.set(message, 5);
   return frame;
+}
+
+function buildAcceptTosPayload(): Uint8Array {
+  return encodeGrpcWebPayload(new Uint8Array([0x10, 0x01]));
 }
 
 function buildEnableNsfwPayload(): Uint8Array {
@@ -245,6 +250,47 @@ function parseGrpcWebStatus(
   return { code, message };
 }
 
+async function setTosAcceptedForToken(
+  token: string,
+  cfCookie: string,
+): Promise<{ ok: boolean; status: number; grpcStatus: number; error: string }> {
+  const cookie = buildSsoCookie(token, cfCookie);
+  const payload = buildAcceptTosPayload();
+  const payloadBody = new Uint8Array(payload.length);
+  payloadBody.set(payload);
+  const bodyBuffer = new ArrayBuffer(payloadBody.byteLength);
+  new Uint8Array(bodyBuffer).set(payloadBody);
+  try {
+    const res = await fetch(NSFW_TOS_API, {
+      method: "POST",
+      headers: {
+        Accept: "*/*",
+        "Content-Type": "application/grpc-web+proto",
+        Origin: "https://accounts.x.ai",
+        Referer: "https://accounts.x.ai/accept-tos",
+        "User-Agent": NSFW_USER_AGENT,
+        "x-grpc-web": "1",
+        Cookie: cookie,
+      },
+      body: bodyBuffer,
+    });
+    if (res.status !== 200) {
+      return { ok: false, status: res.status, grpcStatus: -1, error: `HTTP ${res.status}` };
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const grpc = parseGrpcWebStatus(bytes, res.headers.get("content-type") || "", res.headers);
+    const ok = grpc.code === -1 || grpc.code === 0;
+    return {
+      ok,
+      status: res.status,
+      grpcStatus: grpc.code,
+      error: ok ? "" : (grpc.message || `gRPC ${grpc.code}`),
+    };
+  } catch (e) {
+    return { ok: false, status: 0, grpcStatus: -1, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 async function setBirthDateForToken(token: string, cfCookie: string): Promise<{ ok: boolean; status: number; error: string }> {
   const cookie = buildSsoCookie(token, cfCookie);
   try {
@@ -254,7 +300,7 @@ async function setBirthDateForToken(token: string, cfCookie: string): Promise<{ 
         Accept: "*/*",
         "Content-Type": "application/json",
         Origin: "https://grok.com",
-        Referer: "https://grok.com/?_s=account",
+        Referer: "https://grok.com/",
         "User-Agent": NSFW_USER_AGENT,
         Cookie: cookie,
       },
@@ -277,6 +323,8 @@ async function setNsfwForToken(
   const payload = buildEnableNsfwPayload();
   const payloadBody = new Uint8Array(payload.length);
   payloadBody.set(payload);
+  const bodyBuffer = new ArrayBuffer(payloadBody.byteLength);
+  new Uint8Array(bodyBuffer).set(payloadBody);
   try {
     const res = await fetch(NSFW_GRPC_API, {
       method: "POST",
@@ -284,13 +332,13 @@ async function setNsfwForToken(
         Accept: "*/*",
         "Content-Type": "application/grpc-web+proto",
         Origin: "https://grok.com",
-        Referer: "https://grok.com/",
+        Referer: "https://grok.com/?_s=data",
         "User-Agent": NSFW_USER_AGENT,
         "x-grpc-web": "1",
         "x-user-agent": "connect-es/2.1.1",
         Cookie: cookie,
       },
-      body: payloadBody.buffer,
+      body: bodyBuffer,
     });
     if (res.status !== 200) {
       return { ok: false, status: res.status, grpcStatus: -1, error: `HTTP ${res.status}` };
@@ -571,7 +619,7 @@ async function runNsfwRefreshJob(c: any, jobId: string, tokens: string[], option
   await updateAdminJob(c.env.DB, jobId, {
     status: "running",
     total,
-    current_step: options.enable_nsfw ? "set_birth_and_nsfw" : "set_birth_only",
+    current_step: options.enable_nsfw ? "set_tos_birth_and_nsfw" : "set_tos_and_birth",
   });
 
   try {
@@ -603,6 +651,12 @@ async function runNsfwRefreshJob(c: any, jobId: string, tokens: string[], option
             enable_nsfw: options.enable_nsfw,
           });
           return;
+        }
+        const tos = await setTosAcceptedForToken(token, cf);
+        if (!tos.ok) {
+          lastStep = "tos";
+          lastError = tos.error || `HTTP ${tos.status}`;
+          continue;
         }
         const birth = await setBirthDateForToken(token, cf);
         if (!birth.ok) {
@@ -653,7 +707,7 @@ async function runNsfwRefreshJob(c: any, jobId: string, tokens: string[], option
         success: summary.success,
         failed: summary.failed,
         invalidated: 0,
-        current_step: options.enable_nsfw ? "set_birth_and_nsfw" : "set_birth_only",
+        current_step: options.enable_nsfw ? "set_tos_birth_and_nsfw" : "set_tos_and_birth",
       });
     }
 
@@ -1387,6 +1441,12 @@ adminRoutes.post("/api/v1/admin/tokens/nsfw/refresh", requireAdminAuth, async (c
       let lastError = "unknown";
       const attempts = retries + 1;
       for (let i = 1; i <= attempts; i++) {
+        const tos = await setTosAcceptedForToken(token, cf);
+        if (!tos.ok) {
+          lastStep = "tos";
+          lastError = tos.error || `HTTP ${tos.status}`;
+          continue;
+        }
         const birth = await setBirthDateForToken(token, cf);
         if (!birth.ok) {
           lastStep = "birth";
