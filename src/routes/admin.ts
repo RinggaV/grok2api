@@ -39,6 +39,7 @@ import { checkRateLimits } from "../grok/rateLimits";
 import { addRequestLog, clearRequestLogs, getRequestLogs, getRequestStats } from "../repo/logs";
 import { getRefreshProgress, setRefreshProgress } from "../repo/refreshProgress";
 import {
+  type AdminJobStatus,
   cleanupAdminJobsByStatus,
   createAdminJob,
   findRunningAdminJobByType,
@@ -1539,8 +1540,8 @@ adminRoutes.post("/api/v1/admin/jobs/cleanup", requireAdminAuth, async (c) => {
           .map((item: unknown) => String(item || "").trim().toLowerCase())
           .filter((status: string) => ADMIN_JOB_CLEANUP_STATUSES.has(status)),
       ),
-    ) as Array<"failed" | "cancelled" | "completed">;
-    const statuses = normalizedStatuses.length ? normalizedStatuses : ["failed"];
+    ) as AdminJobStatus[];
+    const statuses: AdminJobStatus[] = normalizedStatuses.length ? normalizedStatuses : ["failed"];
     const deleted = await cleanupAdminJobsByStatus(c.env.DB, statuses);
     return c.json(legacyOk({ deleted, statuses }));
   } catch (e) {
